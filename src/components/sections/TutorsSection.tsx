@@ -19,8 +19,8 @@ function ClassPreview() {
   const content = (
     <div className="group relative overflow-hidden rounded-2xl border border-white/10 shadow-xl transition-all duration-300 hover:border-white/20">
       <Image
-        src="/images/proof-class.png"
-        alt="Watch a real class: Building interactive flows with Ms Ananya, Grade 6 (3:12 · Level 4 class)"
+        src="/images/teaching-classroom-color.jpg"
+        alt="Watch a real class: Wiring a rover's sensors with Mr Rohan, Grade 7 (3:12 · Robotics class)"
         width={1024}
         height={661}
         unoptimized
@@ -62,7 +62,7 @@ export function TutorsSection() {
                 <div>
                   <p className="font-semibold">{t.name}</p>
                   <p className="mt-0.5 text-[13px] text-muted-dark">{t.credentials}</p>
-                  <p className="mt-2 flex flex-wrap gap-2"><Chip>Background-checked</Chip><Chip>Thinkova trained</Chip></p>
+                  <p className="mt-2 flex flex-wrap gap-2"><Chip>Background-checked</Chip><Chip>ThinkOva trained</Chip></p>
                 </div>
               </li>
             ))}

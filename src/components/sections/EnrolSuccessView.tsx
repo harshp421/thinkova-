@@ -8,17 +8,27 @@ export interface EnrolSuccessProps {
   childName?: string;
   payPlan?: "full" | "parts";
   email?: string;
+  schoolCode?: string;
+  orderRef?: string;
   onEdit?: () => void;
 }
 
 export function EnrolSuccessView({
-  childName = "Aarav",
+  childName = "Your child",
   payPlan = "full",
-  email = "you@example.com",
+  email = "your email",
+  schoolCode,
+  orderRef,
   onEdit,
 }: EnrolSuccessProps) {
   const amount = payPlan === "parts" ? "₹2,500" : "₹4,499";
-  const name = childName.trim() || "Aarav";
+  const name = childName.trim() || "Your child";
+  const userEmail = email.trim() || "your email address";
+  const cleanOrderDigits = orderRef
+    ? orderRef.replace(/[^A-Za-z0-9]/g, "").slice(-6).toUpperCase()
+    : "102450";
+  const referenceId = orderRef && orderRef.startsWith("THK-") ? orderRef : `THK-${cleanOrderDigits}`;
+  const planLabel = payPlan === "parts" ? "Paid part 1 (₹2,500)" : "Paid in full";
 
   return (
     <div className="w-full bg-[#fbf9f5] py-10 sm:py-16 lg:py-24 text-ink">
@@ -48,20 +58,20 @@ export function EnrolSuccessView({
             {/* Row 1 */}
             <div className="grid grid-cols-[105px_1fr] sm:grid-cols-[140px_1fr] py-3.5 sm:py-4 items-baseline gap-2.5 sm:gap-6 first:pt-0">
               <span className="font-mono text-xs sm:text-[13px] font-medium text-[#ff5520]">
-                [Date]
+                Orientation
               </span>
               <span className="text-[13px] sm:text-[14px] leading-relaxed text-ink/80">
-                Online parent session, 30 minutes. The link comes on WhatsApp.
+                Online parent session, 30 minutes. The link comes to WhatsApp and {userEmail}.
               </span>
             </div>
 
             {/* Row 2 */}
             <div className="grid grid-cols-[105px_1fr] sm:grid-cols-[140px_1fr] py-3.5 sm:py-4 items-baseline gap-2.5 sm:gap-6">
               <span className="font-mono text-xs sm:text-[13px] font-medium text-[#ff5520]">
-                [Date]
+                Week 1
               </span>
               <span className="text-[13px] sm:text-[14px] leading-relaxed text-ink/80">
-                Level 1 at [School name], [day], 90 minutes in the computer lab.
+                Level 1 at {schoolCode ? `School (Code: ${schoolCode})` : "the school computer lab"}, 90 minutes in the lab.
               </span>
             </div>
 
@@ -90,8 +100,8 @@ export function EnrolSuccessView({
         {/* Buttons */}
         <div className="mt-6 sm:mt-7 flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3">
           <a
-            href="/downloads/Thinkova-Eight-Week-Curriculum.pdf"
-            download="Thinkova Eight-Week Curriculum.pdf"
+            href="/downloads/ThinkOva-Eight-Week-Curriculum.pdf"
+            download="ThinkOva Eight-Week Curriculum.pdf"
             className="flex h-12 w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff5520] to-[#ff6b2c] px-6 text-[14px] font-semibold text-white shadow-sm transition hover:brightness-105 active:scale-95"
           >
             <span>Download the curriculum (PDF)</span>
@@ -110,8 +120,8 @@ export function EnrolSuccessView({
         </div>
 
         {/* Reference note */}
-        <p className="mt-6 sm:mt-8 font-mono text-[11px] sm:text-xs text-ink/45">
-          Reference LVL-[000123] · Paid in full · Receipt sent to {email}
+        <p className="mt-6 sm:mt-8 font-mono text-[11px] sm:text-xs text-ink/60">
+          Reference {referenceId} · {planLabel} · Receipt sent to <strong className="text-ink font-semibold">{userEmail}</strong>
         </p>
 
         {/* Back / edit option */}

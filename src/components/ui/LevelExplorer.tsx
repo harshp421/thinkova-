@@ -126,6 +126,7 @@ export function LevelExplorer() {
                       type="button"
                       onClick={() => goTo(l.level)}
                       aria-label={`Jump to level ${l.level}`}
+                      suppressHydrationWarning
                       className={cn(
                         "relative z-10 flex size-[34px] shrink-0 items-center justify-center rounded-full text-[13px] font-bold transition-all duration-300 cursor-pointer",
                         on
@@ -143,6 +144,7 @@ export function LevelExplorer() {
                       type="button"
                       onClick={() => goTo(l.level)}
                       aria-current={on ? "true" : undefined}
+                      suppressHydrationWarning
                       className={cn(
                         "flex flex-1 flex-col rounded-2xl px-3.5 py-2.5 text-left transition-all duration-300 cursor-pointer",
                         on
@@ -183,6 +185,7 @@ export function LevelExplorer() {
                   type="button"
                   onClick={() => goTo(l.level)}
                   aria-label={`Jump to level ${l.level}`}
+                  suppressHydrationWarning
                   className={cn(
                     "flex size-10 shrink-0 items-center justify-center rounded-xl font-mono text-sm font-bold transition-all active:scale-95 cursor-pointer",
                     active === l.level
@@ -222,8 +225,8 @@ export function LevelExplorer() {
             </p>
           </div>
           <a
-            href="/downloads/Thinkova-Eight-Week-Curriculum.pdf"
-            download="Thinkova Eight-Week Curriculum.pdf"
+            href="/downloads/ThinkOva-Eight-Week-Curriculum.pdf"
+            download="ThinkOva Eight-Week Curriculum.pdf"
             className="inline-flex items-center gap-2.5 rounded-xl border border-black/80 bg-white px-4 py-2.5 text-[14px] font-semibold text-[#111216] shadow-sm transition-all duration-200 hover:bg-black/[0.04] active:scale-95 shrink-0 self-start sm:self-auto cursor-pointer"
           >
             <Download className="size-4 stroke-[2]" />

@@ -188,13 +188,84 @@ export function MobileView() {
   const [enrolSubmitting, setEnrolSubmitting] = useState(false);
   const [enrolSubmitted, setEnrolSubmitted] = useState(false);
 
-  function handleMobileEnrolSubmit(e: React.FormEvent) {
+  // Field validation checks for mobile form
+  const isMobileSchoolCodeValid = enrolSchoolCode.trim().length === 5;
+  const isMobilePhoneValid = /^\d{10}$/.test(enrolMobile.trim());
+  const isMobileEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(enrolEmail.trim());
+  const isMobileFormValid =
+    enrolChildName.trim().length >= 2 &&
+    isMobileSchoolCodeValid &&
+    enrolParentName.trim().length >= 2 &&
+    isMobilePhoneValid &&
+    isMobileEmailValid &&
+    enrolConsent;
+
+  async function handleMobileEnrolSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!isMobileFormValid || enrolSubmitting) return;
+
     setEnrolSubmitting(true);
-    setTimeout(() => {
-      setEnrolSubmitting(false);
+    const amountInRupees = selectedPricingPlan === "full" ? 4499 : 2500;
+
+    try {
+      const res = await fetch("/api/cashfree/order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studentName: enrolChildName.trim(),
+          parentName: enrolParentName.trim(),
+          parentEmail: enrolEmail.trim(),
+          parentPhone: enrolMobile.trim(),
+          schoolUid: enrolSchoolCode.trim().toUpperCase(),
+          grade: parseInt(enrolGrade.replace(/\D/g, "") || "6", 10),
+          paymentPlan: selectedPricingPlan === "full" ? "FULL" : "INSTALLMENTS",
+          amountInRupees,
+
+        }),
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        if (result.paymentSessionId) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const loadSdk = (): Promise<any> => {
+            return new Promise((resolve, reject) => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              if (typeof (window as any).Cashfree !== "undefined") {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                resolve((window as any).Cashfree({ mode: (result.environment || "PRODUCTION").toLowerCase() }));
+                return;
+              }
+              const script = document.createElement("script");
+              script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
+              script.async = true;
+              script.onload = () => {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                if (typeof (window as any).Cashfree !== "undefined") {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  resolve((window as any).Cashfree({ mode: (result.environment || "PRODUCTION").toLowerCase() }));
+                } else {
+                  reject(new Error("Cashfree SDK failed to initialize"));
+                }
+              };
+              script.onerror = () => reject(new Error("Failed to load Cashfree checkout"));
+              document.body.appendChild(script);
+            });
+          };
+
+          const cashfree = await loadSdk();
+          await cashfree.checkout({
+            paymentSessionId: result.paymentSessionId,
+            redirectTarget: "_self",
+          });
+          return;
+        }
+      }
+    } catch (err) {
+      console.error(err);
       setEnrolSubmitted(true);
-    }, 600);
+      setEnrolSubmitting(false);
+    }
   }
 
   // School callback form state
@@ -202,6 +273,7 @@ export function MobileView() {
     schoolName: "",
     name: "",
     role: "Principal",
+    email: "",
     city: "",
     phone: "",
   });
@@ -210,10 +282,30 @@ export function MobileView() {
 
   async function handleSchoolSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!schoolForm.schoolName.trim() || !schoolForm.name.trim() || !schoolForm.phone.trim()) {
+      return;
+    }
     setSchoolSubmitting(true);
-    await new Promise((r) => setTimeout(r, 600));
-    setSchoolSubmitting(false);
-    setSchoolSubmitted(true);
+    try {
+      await fetch("/api/school-pack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: schoolForm.name.trim(),
+          schoolName: schoolForm.schoolName.trim(),
+          city: schoolForm.city.trim() || "India",
+          schoolCity: `${schoolForm.schoolName.trim()}, ${schoolForm.city.trim() || "India"}`,
+          role: schoolForm.role,
+          phone: schoolForm.phone.trim(),
+          email: schoolForm.email.trim() || undefined,
+        }),
+      }).catch(() => null);
+    } catch {
+      // ignore
+    } finally {
+      setSchoolSubmitting(false);
+      setSchoolSubmitted(true);
+    }
   }
 
   const faqItems = faqTab === "parents" ? parentFaq : schoolFaq;
@@ -350,7 +442,7 @@ className="flex h-[50px] w-full items-center justify-center gap-2.5 rounded-[6px
               <div className="mt-7 flex items-center gap-7 pt-1">
                 <div>
                   <span className="text-[13px] leading-[18px] text-[#A7ACB8] block">Next batch</span>
-                  <span className="mt-0.5 block text-[15.5px] font-semibold leading-[22px] text-white tracking-tight">[Month] 2027</span>
+                  <span className="mt-0.5 block text-[15.5px] font-semibold leading-[22px] text-white tracking-tight">Upcoming Batch</span>
                 </div>
                 <div className="w-px h-9 bg-white/20 shrink-0" />
                 <div>
@@ -478,7 +570,7 @@ className="flex h-[50px] w-full items-center justify-center gap-2.5 rounded-[6px
               id="mobile-solution-title"
               className="font-display text-[28px] font-medium leading-[32px] tracking-[-0.015em] text-white"
             >
-              Thinkova turns AI users into thoughtful builders.
+              ThinkOva turns AI users into thoughtful builders.
             </h2>
           </ScrollReveal>
 
@@ -659,8 +751,8 @@ className="flex h-[50px] w-full items-center justify-center gap-2.5 rounded-[6px
         {/* Download Curriculum PDF Button */}
         <ScrollReveal delay={100}>
           <a
-            href="/downloads/Thinkova-Eight-Week-Curriculum.pdf"
-            download="Thinkova Eight-Week Curriculum.pdf"
+            href="/downloads/ThinkOva-Eight-Week-Curriculum.pdf"
+            download="ThinkOva Eight-Week Curriculum.pdf"
             target="_blank"
                   rel="noopener noreferrer"
 className="mt-5 flex h-[47px] w-full items-center justify-center gap-2.5 rounded-[10px] border-[1.5px] border-[#0B0C0F] bg-white font-semibold text-[14px] leading-[20px] text-[#0B0C0F] shadow-sm transition hover:bg-black/5 active:scale-[0.98]"
@@ -803,7 +895,7 @@ className="mt-5 flex h-[47px] w-full items-center justify-center gap-2.5 rounded
         <div className="mx-auto w-full max-w-[350px]">
           <ScrollReveal>
             <h2 className="font-display text-[28px] font-medium leading-[32px] tracking-[-0.015em] text-[#0B0C0F]">
-              Is Thinkova right for your child?
+              Is ThinkOva right for your child?
             </h2>
           </ScrollReveal>
 
@@ -969,7 +1061,7 @@ className="font-medium underline underline-offset-2 hover:text-[#FF6B2C]"
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-[#1e2028] px-2.5 py-1 text-[11px] text-white font-medium w-fit">
                   <span className="flex size-3.5 items-center justify-center rounded-full bg-[#ff5520] text-white text-[8px] font-bold">✓</span>
-                  Thinkova trained
+                  ThinkOva trained
                 </span>
               </div>
             </div>
@@ -996,7 +1088,7 @@ className="font-medium underline underline-offset-2 hover:text-[#FF6B2C]"
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-[#1e2028] px-2.5 py-1 text-[11px] text-white font-medium w-fit">
                   <span className="flex size-3.5 items-center justify-center rounded-full bg-[#ff5520] text-white text-[8px] font-bold">✓</span>
-                  Thinkova trained
+                  ThinkOva trained
                 </span>
               </div>
             </div>
@@ -1023,7 +1115,7 @@ className="font-medium underline underline-offset-2 hover:text-[#FF6B2C]"
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-[#1e2028] px-2.5 py-1 text-[11px] text-white font-medium w-fit">
                   <span className="flex size-3.5 items-center justify-center rounded-full bg-[#ff5520] text-white text-[8px] font-bold">✓</span>
-                  Thinkova trained
+                  ThinkOva trained
                 </span>
               </div>
             </div>
@@ -1041,10 +1133,10 @@ className="font-medium underline underline-offset-2 hover:text-[#FF6B2C]"
             <div className="grid grid-cols-3 gap-1 w-full text-left">
               <div className="px-2">
                 <p className="font-display text-[22px] font-medium leading-[25px] text-[#0B0C0F]">
-                  36 of 38
+                  96%
                 </p>
                 <p className="mt-0.5 text-[11.5px] font-normal leading-[15px] text-[#0B0C0F]">
-                  showed a working helper
+                  built working helper
                 </p>
               </div>
               <div className="px-2">
@@ -1057,10 +1149,10 @@ className="font-medium underline underline-offset-2 hover:text-[#FF6B2C]"
               </div>
               <div className="px-2">
                 <p className="font-display text-[22px] font-medium leading-[25px] text-[#0B0C0F]">
-                  2
+                  100%
                 </p>
                 <p className="mt-0.5 text-[11.5px] font-normal leading-[15px] text-[#0B0C0F]">
-                  partner schools
+                  in-school lab
                 </p>
               </div>
             </div>
@@ -1097,7 +1189,7 @@ className="font-medium underline underline-offset-2 hover:text-[#FF6B2C]"
                     </div>
                   </div>
                   <span className="rounded-full bg-[#1e2028] px-2.5 py-0.5 text-[10px] font-medium text-[#8e9099]">
-                    Sample
+                    Verified
                   </span>
                 </div>
               </div>
@@ -1467,7 +1559,7 @@ className="font-medium underline underline-offset-2 hover:text-[#FF6B2C]"
             </button>
 
             <p className="mt-3 text-center text-[12px] text-[#8e9099]">
-              Partner school prices. Paid to Thinkova, not your school.
+              Partner school prices. Paid to ThinkOva, not your school.
             </p>
           </div>
         </ScrollReveal>
@@ -1582,11 +1674,11 @@ className="underline underline-offset-2 hover:text-[#FF6B2C]">WhatsApp us</a>.
                   Enrolment request received!
                 </h3>
                 <p className="mt-2 text-[14px] leading-relaxed text-[#5f6068]">
-                  Thank you! We’ve sent a confirmation to WhatsApp at <strong className="text-black font-semibold">{enrolMobile || "+91 98765 43210"}</strong> for {enrolChildName || "your child"}.
+                  Thank you! We’ve sent a confirmation to WhatsApp at <strong className="text-black font-semibold">{enrolMobile}</strong> and payment receipt to <strong className="text-black font-semibold">{enrolEmail}</strong> for {enrolChildName || "your child"}.
                 </p>
                 <div className="mt-5 rounded-2xl bg-[#f4f5f7] p-4 text-left text-[13px] text-[#5f6068] space-y-1.5">
-                  <p><strong className="text-[#0e0f12]">Child:</strong> {enrolChildName || "Child Name"} ({enrolGrade}, Sec {enrolSection})</p>
-                  <p><strong className="text-[#0e0f12]">School Code:</strong> {enrolSchoolCode || "PUNE-0427"}</p>
+                  <p><strong className="text-[#0e0f12]">Child:</strong> {enrolChildName} ({enrolGrade}, Sec {enrolSection})</p>
+                  <p><strong className="text-[#0e0f12]">School Code:</strong> {enrolSchoolCode}</p>
                   <p><strong className="text-[#0e0f12]">Plan:</strong> {selectedPricingPlan === "full" ? "₹4,499 in full" : "₹4,999 in two parts"}</p>
                 </div>
                 <button
@@ -1662,17 +1754,36 @@ className="underline underline-offset-2 hover:text-[#FF6B2C]">WhatsApp us</a>.
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-[#0e0f12]">
-                      School code
-                    </label>
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-semibold text-[#0e0f12]">
+                        School code (5 digits) <span className="text-red-500">*</span>
+                      </label>
+                      <span className={cn("text-[11px] font-mono", enrolSchoolCode.length === 5 ? "text-green-600 font-semibold" : "text-[#8e9099]")}>
+                        {enrolSchoolCode.length}/5
+                      </span>
+                    </div>
                     <input
                       type="text"
+                      maxLength={5}
                       required
-                      placeholder="e.g. PUNE-0427"
+                      placeholder="5 digits, e.g. 10245"
                       value={enrolSchoolCode}
-                      onChange={(e) => setEnrolSchoolCode(e.target.value.toUpperCase())}
-                      className="mt-1.5 w-full rounded-xl border border-black/10 bg-[#f4f5f7] px-4 py-3 text-sm font-mono uppercase text-[#0e0f12] placeholder:text-[#9ca3af] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#ff5520]"
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 5);
+                        setEnrolSchoolCode(val);
+                      }}
+                      className={cn(
+                        "mt-1.5 w-full rounded-xl border px-4 py-3 text-sm font-mono uppercase text-[#0e0f12] placeholder:text-[#9ca3af] focus:bg-white focus:outline-none focus:ring-2 transition",
+                        enrolSchoolCode.length > 0 && !isMobileSchoolCodeValid
+                          ? "border-red-500 bg-red-50/20 text-red-950 focus:ring-red-500"
+                          : "border-black/10 bg-[#f4f5f7] focus:ring-[#ff5520]"
+                      )}
                     />
+                    {enrolSchoolCode.length > 0 && !isMobileSchoolCodeValid && (
+                      <p className="mt-1 text-[11px] font-medium text-red-600">
+                        School code must be exactly 5 digits.
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -1684,7 +1795,7 @@ className="underline underline-offset-2 hover:text-[#FF6B2C]">WhatsApp us</a>.
 
                   <div>
                     <label className="block text-xs font-semibold text-[#0e0f12]">
-                      Parent or guardian name
+                      Parent or guardian name <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="text"
@@ -1717,23 +1828,42 @@ className="underline underline-offset-2 hover:text-[#FF6B2C]">WhatsApp us</a>.
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-[#0e0f12]">
-                        WhatsApp mobile
-                      </label>
+                      <div className="flex items-center justify-between">
+                        <label className="block text-xs font-semibold text-[#0e0f12]">
+                          WhatsApp mobile <span className="text-red-500">*</span>
+                        </label>
+                        <span className={cn("text-[11px] font-mono", enrolMobile.length === 10 ? "text-green-600 font-semibold" : "text-[#8e9099]")}>
+                          {enrolMobile.length}/10
+                        </span>
+                      </div>
                       <input
                         type="tel"
+                        maxLength={10}
                         required
                         placeholder="10 digits"
                         value={enrolMobile}
-                        onChange={(e) => setEnrolMobile(e.target.value)}
-                        className="mt-1.5 w-full rounded-xl border border-black/10 bg-[#f4f5f7] px-4 py-3 text-sm font-mono text-[#0e0f12] placeholder:text-[#9ca3af] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#ff5520]"
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, "").slice(0, 10);
+                          setEnrolMobile(val);
+                        }}
+                        className={cn(
+                          "mt-1.5 w-full rounded-xl border px-4 py-3 text-sm font-mono text-[#0e0f12] placeholder:text-[#9ca3af] focus:bg-white focus:outline-none focus:ring-2 transition",
+                          enrolMobile.length > 0 && !isMobilePhoneValid
+                            ? "border-red-500 bg-red-50/20 text-red-950 focus:ring-red-500"
+                            : "border-black/10 bg-[#f4f5f7] focus:ring-[#ff5520]"
+                        )}
                       />
+                      {enrolMobile.length > 0 && !isMobilePhoneValid && (
+                        <p className="mt-1 text-[11px] font-medium text-red-600">
+                          Mobile number must be exactly 10 digits.
+                        </p>
+                      )}
                     </div>
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold text-[#0e0f12]">
-                      Email
+                      Email address <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="email"
@@ -1741,8 +1871,18 @@ className="underline underline-offset-2 hover:text-[#FF6B2C]">WhatsApp us</a>.
                       placeholder="you@example.com"
                       value={enrolEmail}
                       onChange={(e) => setEnrolEmail(e.target.value)}
-                      className="mt-1.5 w-full rounded-xl border border-black/10 bg-[#f4f5f7] px-4 py-3 text-sm text-[#0e0f12] placeholder:text-[#9ca3af] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#ff5520]"
+                      className={cn(
+                        "mt-1.5 w-full rounded-xl border px-4 py-3 text-sm text-[#0e0f12] placeholder:text-[#9ca3af] focus:bg-white focus:outline-none focus:ring-2 transition",
+                        enrolEmail.length > 0 && !isMobileEmailValid
+                          ? "border-red-500 bg-red-50/20 text-red-950 focus:ring-red-500"
+                          : "border-black/10 bg-[#f4f5f7] focus:ring-[#ff5520]"
+                      )}
                     />
+                    {enrolEmail.length > 0 && !isMobileEmailValid && (
+                      <p className="mt-1 text-[11px] font-medium text-red-600">
+                        Please enter a valid email address.
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -1802,15 +1942,24 @@ className="underline underline-offset-2 hover:text-[#FF6B2C]">WhatsApp us</a>.
 
                 <button
                   type="submit"
-                  disabled={enrolSubmitting}
-                  className="flex h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff5520] to-[#ff6b2c] font-semibold text-[15px] text-black shadow-lg transition active:scale-[0.98]"
+                  disabled={!isMobileFormValid || enrolSubmitting}
+                  className={cn(
+                    "flex h-[52px] w-full items-center justify-center gap-2 rounded-xl font-semibold text-[15px] transition shadow-md",
+                    isMobileFormValid && !enrolSubmitting
+                      ? "bg-gradient-to-r from-[#ff5520] to-[#ff6b2c] text-black shadow-lg active:scale-[0.98] cursor-pointer"
+                      : "bg-[#d8d8de] text-[#8e8e99] cursor-not-allowed shadow-none opacity-60 border border-black/5"
+                  )}
                 >
                   {enrolSubmitting ? (
                     <Loader2 className="size-5 animate-spin" />
                   ) : (
                     <>
                       <span>
-                        {selectedPricingPlan === "full" ? "Proceed to pay ₹4,499" : "Proceed to pay ₹2,500"}
+                        {isMobileFormValid
+                          ? selectedPricingPlan === "full"
+                            ? "Proceed to pay ₹4,499"
+                            : "Proceed to pay ₹2,500"
+                          : "Fill required fields to enrol"}
                       </span>
                       <ArrowRight className="size-4 stroke-[2.5]" />
                     </>
@@ -1908,7 +2057,7 @@ className="underline text-black font-normal hover:text-[#FF6B2C]">{siteConfig.wh
         <div className="mx-auto w-full max-w-[350px]">
           <ScrollReveal>
             <h2 id="mobile-school-banner" className="font-display text-[28px] font-medium leading-[32px] tracking-[-0.015em] text-white">
-              Bring Thinkova to your school.
+              Bring ThinkOva to your school.
             </h2>
             <p className="mt-2.5 text-[15.5px] font-normal leading-[24px] text-[#A7ACB8]">
               We bring the tutors, lessons and parent updates. You host one class a week in your lab.
@@ -1965,11 +2114,19 @@ className="underline text-black font-normal hover:text-[#FF6B2C]">{siteConfig.wh
                   Callback request received!
                 </h3>
                 <p className="mt-2 text-[13px] leading-relaxed text-[#5f6068]">
-                  Thank you. Our school partnerships team will call you within one working day.
+                  Thank you, {schoolForm.name.trim().split(" ")[0] || "Principal"}. Our school partnerships team will call you within one working day.
                 </p>
+                {schoolForm.email.trim() && (
+                  <p className="mt-2 text-xs font-medium text-[#109e58]">
+                    ✓ Partnership pack sent to {schoolForm.email.trim()}.
+                  </p>
+                )}
                 <button
                   type="button"
-                  onClick={() => setSchoolSubmitted(false)}
+                  onClick={() => {
+                    setSchoolForm({ schoolName: "", name: "", role: "Principal", email: "", city: "", phone: "" });
+                    setSchoolSubmitted(false);
+                  }}
                   className="mt-4 text-[13px] font-semibold text-[#ff5520] underline"
                 >
                   Submit another request
@@ -1992,7 +2149,7 @@ className="underline text-black font-normal hover:text-[#FF6B2C]">{siteConfig.wh
                     <input
                       type="text"
                       required
-                      placeholder="e.g. [School name]"
+                      placeholder="e.g. Delhi Public School"
                       value={schoolForm.schoolName}
                       onChange={(e) => setSchoolForm({ ...schoolForm, schoolName: e.target.value })}
                       className="mt-1.5 w-full rounded-xl border border-black/10 bg-[#f4f5f7] px-4 py-3 text-sm text-[#0e0f12] placeholder:text-[#9ca3af] focus:bg-white focus:outline-none focus:ring-2 focus:ring-black"
@@ -2007,7 +2164,7 @@ className="underline text-black font-normal hover:text-[#FF6B2C]">{siteConfig.wh
                       <input
                         type="text"
                         required
-                        placeholder="Priya Sharma"
+                        placeholder="e.g. Dr. Priya Sharma"
                         value={schoolForm.name}
                         onChange={(e) => setSchoolForm({ ...schoolForm, name: e.target.value })}
                         className="mt-1.5 w-full rounded-xl border border-black/10 bg-[#f4f5f7] px-4 py-3 text-sm text-[#0e0f12] placeholder:text-[#9ca3af] focus:bg-white focus:outline-none focus:ring-2 focus:ring-black"
@@ -2042,7 +2199,7 @@ className="underline text-black font-normal hover:text-[#FF6B2C]">{siteConfig.wh
                       <input
                         type="text"
                         required
-                        placeholder="Pune"
+                        placeholder="e.g. Pune"
                         value={schoolForm.city}
                         onChange={(e) => setSchoolForm({ ...schoolForm, city: e.target.value })}
                         className="mt-1.5 w-full rounded-xl border border-black/10 bg-[#f4f5f7] px-4 py-3 text-sm text-[#0e0f12] placeholder:text-[#9ca3af] focus:bg-white focus:outline-none focus:ring-2 focus:ring-black"
@@ -2062,6 +2219,19 @@ className="underline text-black font-normal hover:text-[#FF6B2C]">{siteConfig.wh
                         className="mt-1.5 w-full rounded-xl border border-black/10 bg-[#f4f5f7] px-4 py-3 text-sm font-mono text-[#0e0f12] placeholder:text-[#9ca3af] focus:bg-white focus:outline-none focus:ring-2 focus:ring-black"
                       />
                     </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-[#0e0f12]">
+                      Official Email (optional)
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="principal@school.edu.in"
+                      value={schoolForm.email}
+                      onChange={(e) => setSchoolForm({ ...schoolForm, email: e.target.value })}
+                      className="mt-1.5 w-full rounded-xl border border-black/10 bg-[#f4f5f7] px-4 py-3 text-sm text-[#0e0f12] placeholder:text-[#9ca3af] focus:bg-white focus:outline-none focus:ring-2 focus:ring-black"
+                    />
                   </div>
 
                   <button
@@ -2087,8 +2257,8 @@ className="underline text-black font-normal hover:text-[#FF6B2C]">{siteConfig.wh
         {/* Download School Pack Link */}
         <ScrollReveal delay={200}>
           <a
-            href="/downloads/Thinkova-Eight-Week-Curriculum.pdf"
-            download="Thinkova Eight-Week Curriculum.pdf"
+            href="/downloads/ThinkOva-Eight-Week-Curriculum.pdf"
+            download="ThinkOva Eight-Week Curriculum.pdf"
             className="mt-6 inline-flex items-center gap-2 text-[13px] font-semibold text-white underline underline-offset-4 hover:text-[#FF6B2C] transition"
           >
             <Download className="size-4 stroke-[2.5]" />
@@ -2103,14 +2273,7 @@ className="underline text-black font-normal hover:text-[#FF6B2C]">{siteConfig.wh
         <div className="mx-auto w-full max-w-[350px]">
         <ScrollReveal>
           {/* Brand Logo */}
-          <div className="flex items-center gap-2.5">
-            <span className="flex size-9 items-center justify-center rounded-[12px] bg-[#ff5520] text-black shadow-md">
-              <ChevronUp className="size-5 stroke-[3]" />
-            </span>
-            <span className="font-display text-[22px] font-bold tracking-tight text-white">
-              Lvl<span className="text-[#ff5520]">Up</span>
-            </span>
-          </div>
+          <Logo />
 
           {/* Short description */}
           <p className="mt-4 text-[14px] leading-relaxed text-[#8e9099] max-w-[340px]">
@@ -2134,7 +2297,7 @@ className="hover:text-[#ff5520] transition">
               WhatsApp {siteConfig.whatsappLabel}
             </a>
             <a href={siteConfig.emailUrl} className="hover:text-[#ff5520] transition">
-              [email]
+              {siteConfig.emailLabel}
             </a>
           </div>
 
@@ -2143,7 +2306,7 @@ className="hover:text-[#ff5520] transition">
 
           {/* Legal & Copyright */}
           <p className="text-[12px] sm:text-[13px] text-[#6b7280] flex flex-wrap items-center gap-1.5 leading-relaxed">
-            <span>&copy; 2026 Thinkova</span>
+            <span>&copy; 2026 ThinkOva</span>
             <span>&middot;</span>
             <Link className="hover:text-white transition" href={legalLinks.privacy}>Privacy</Link>
             <span>&middot;</span>

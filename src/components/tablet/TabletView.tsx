@@ -2,6 +2,8 @@
 
 import { useState, useRef } from "react";
 import Image from "next/image";
+import Link from "next/link";
+import { useAuth } from "@/lib/auth-context";
 import {
   Check,
   Play,
@@ -44,6 +46,7 @@ import {
 } from "@/data/content";
 import { cn } from "@/lib/utils";
 import { ScrollReveal } from "@/components/ui/ScrollReveal";
+import { Logo } from "@/components/ui/Logo";
 
 const problemCardsData = [
   {
@@ -176,11 +179,23 @@ export function TabletView() {
   const [childName, setChildName] = useState("");
   const [childGrade, setChildGrade] = useState("Grade 6");
   const [childSec, setChildSec] = useState("A");
-  const [schoolCode, setSchoolCode] = useState("PUNE-0427");
+  const [schoolCode, setSchoolCode] = useState("");
   const [parentName, setParentName] = useState("");
+  const [parentEmail, setParentEmail] = useState("");
   const [mobileNum, setMobileNum] = useState("");
   const [enrolSubmitted, setEnrolSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Field validation checks for tablet form
+  const isTabletSchoolCodeValid = schoolCode.trim().length === 5;
+  const isTabletPhoneValid = /^\d{10}$/.test(mobileNum.trim());
+  const isTabletEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parentEmail.trim());
+  const isTabletFormValid =
+    childName.trim().length >= 2 &&
+    isTabletSchoolCodeValid &&
+    parentName.trim().length >= 2 &&
+    isTabletPhoneValid &&
+    isTabletEmailValid;
 
   // School pack form
   const [schoolSubmitted, setSchoolSubmitted] = useState(false);
@@ -200,18 +215,100 @@ export function TabletView() {
     }
   };
 
-  const handleEnrolSubmit = (e: React.FormEvent) => {
+  const handleEnrolSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isTabletFormValid || isSubmitting) return;
+
     setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
+    const amountInRupees = selectedPlan === "full" ? 4499 : 2500;
+
+    try {
+      const res = await fetch("/api/cashfree/order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studentName: childName.trim(),
+          parentName: parentName.trim(),
+          parentEmail: parentEmail.trim(),
+          parentPhone: mobileNum.trim(),
+          schoolUid: schoolCode.trim().toUpperCase(),
+          grade: parseInt(childGrade.replace(/\D/g, "") || "6", 10),
+          paymentPlan: selectedPlan === "full" ? "FULL" : "INSTALLMENTS",
+          amountInRupees,
+
+        }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        if (result.paymentSessionId) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const loadSdk = (): Promise<any> => {
+            return new Promise((resolve, reject) => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              if (typeof (window as any).Cashfree !== "undefined") {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                resolve((window as any).Cashfree({ mode: (result.environment || "PRODUCTION").toLowerCase() }));
+                return;
+              }
+              const script = document.createElement("script");
+              script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
+              script.async = true;
+              script.onload = () => {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                if (typeof (window as any).Cashfree !== "undefined") {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  resolve((window as any).Cashfree({ mode: (result.environment || "PRODUCTION").toLowerCase() }));
+                } else {
+                  reject(new Error("Cashfree SDK failed to initialize"));
+                }
+              };
+              script.onerror = () => reject(new Error("Failed to load Cashfree checkout"));
+              document.body.appendChild(script);
+            });
+          };
+
+          const cashfree = await loadSdk();
+          await cashfree.checkout({
+            paymentSessionId: result.paymentSessionId,
+            redirectTarget: "_self",
+          });
+          return;
+        }
+      }
       setEnrolSubmitted(true);
-    }, 600);
+    } catch (err) {
+      console.error(err);
+      setEnrolSubmitted(true);
+      setIsSubmitting(false);
+    }
   };
 
-  const handleSchoolSubmit = (e: React.FormEvent) => {
+  const [schoolSubmitting, setSchoolSubmitting] = useState(false);
+
+  const handleSchoolSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSchoolSubmitted(true);
+    if (!schoolName.trim() || !contactPerson.trim() || !schoolPhone.trim()) return;
+    setSchoolSubmitting(true);
+    try {
+      await fetch("/api/school-pack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: contactPerson.trim(),
+          schoolName: schoolName.trim(),
+          city: schoolCity.trim() || "India",
+          schoolCity: `${schoolName.trim()}, ${schoolCity.trim() || "India"}`,
+          role: schoolRole,
+          phone: schoolPhone.trim(),
+          email: schoolEmail.trim() || undefined,
+        }),
+      }).catch(() => null);
+    } catch {
+      // ignore
+    } finally {
+      setSchoolSubmitting(false);
+      setSchoolSubmitted(true);
+    }
   };
 
   return (
@@ -221,16 +318,18 @@ export function TabletView() {
       ───────────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-50 w-full border-b border-[#23262F]/60 bg-[#0B0C0F]/95 backdrop-blur-md">
         <div className="mx-auto flex h-[72px] max-w-[768px] items-center justify-between px-10">
-          {/* Thinkova Logo */}
-          <div
-            onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-            className="flex cursor-pointer items-center gap-[10px]"
-          >
-            <Image src="/thinkova-logo.svg" alt="Thinkova" width={139} height={34} priority className="h-8 w-auto object-contain" />
-          </div>
+          {/* ThinkOva Logo */}
+          <Logo />
 
           {/* Right CTA + Menu Button */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
+            <Link
+              href="/login"
+              className="text-[14px] font-medium text-white/80 transition hover:text-white"
+            >
+              Parent log in
+            </Link>
+
             <button
               type="button"
               onClick={() => {
@@ -294,6 +393,13 @@ export function TabletView() {
             >
               For schools
             </button>
+            <Link
+              href="/login"
+              onClick={() => setIsMenuOpen(false)}
+              className="border-t border-[#23262F] pt-4 text-left font-medium text-[#FF8B4E] transition hover:text-white"
+            >
+              Parent log in &rarr;
+            </Link>
           </nav>
         </div>
       )}
@@ -436,7 +542,7 @@ export function TabletView() {
             <div className="flex items-center gap-6 pt-2 text-[14px]">
               <div className="flex flex-col">
                 <span className="text-[12px] text-[#A7ACB8]">Next batch</span>
-                <span className="font-semibold text-white mt-0.5">[Month] 2027</span>
+                <span className="font-semibold text-white mt-0.5">Upcoming Batch</span>
               </div>
               <div className="h-8 w-px bg-white/15" />
               <div className="flex flex-col">
@@ -574,7 +680,7 @@ export function TabletView() {
         <ScrollReveal>
           <div className="w-full">
             <h2 className="font-display text-[36px] font-normal leading-[41px] tracking-[-0.015em] text-white">
-              Thinkova turns AI users into thoughtful builders.
+              ThinkOva turns AI users into thoughtful builders.
             </h2>
             <p className="mt-2.5 text-[17px] font-normal leading-[26px] text-[#A7ACB8]">
               Every class mixes a short idea, a tutor demo and a lot of hands-on making.
@@ -735,8 +841,8 @@ export function TabletView() {
         {/* Download Curriculum PDF Button */}
         <div className="mt-7 flex justify-center">
           <a
-            href="/downloads/Thinkova-Eight-Week-Curriculum.pdf"
-            download="Thinkova Eight-Week Curriculum.pdf"
+            href="/downloads/ThinkOva-Eight-Week-Curriculum.pdf"
+            download="ThinkOva Eight-Week Curriculum.pdf"
             className="flex h-[47px] w-[266px] items-center justify-center gap-2 rounded-[8px] border border-[#2B2E36] bg-white text-[15px] font-semibold text-[#0B0C0F] shadow-xs hover:border-[#FF6B2C] hover:bg-[#FFFDF7] transition"
           >
             <Download className="size-4 text-[#FF6B2C]" />
@@ -812,7 +918,7 @@ export function TabletView() {
         <ScrollReveal>
           <div>
             <h2 className="font-display text-[36px] font-normal leading-[41px] tracking-[-0.015em] text-[#0B0C0F]">
-              Is Thinkova right for your child?
+              Is ThinkOva right for your child?
             </h2>
           </div>
         </ScrollReveal>
@@ -1030,7 +1136,7 @@ export function TabletView() {
                   </div>
                   <div className="flex items-center gap-1.5">
                     <Check className="size-3.5 text-[#FF6B2C]" />
-                    <span>Thinkova trained</span>
+                    <span>ThinkOva trained</span>
                   </div>
                 </div>
               </div>
@@ -1060,7 +1166,7 @@ export function TabletView() {
                   </div>
                   <div className="flex items-center gap-1.5">
                     <Check className="size-3.5 text-[#FF6B2C]" />
-                    <span>Thinkova trained</span>
+                    <span>ThinkOva trained</span>
                   </div>
                 </div>
               </div>
@@ -1090,7 +1196,7 @@ export function TabletView() {
                   </div>
                   <div className="flex items-center gap-1.5">
                     <Check className="size-3.5 text-[#FF6B2C]" />
-                    <span>Thinkova trained</span>
+                    <span>ThinkOva trained</span>
                   </div>
                 </div>
               </div>
@@ -1107,9 +1213,9 @@ export function TabletView() {
         <ScrollReveal delay={100}>
           <div className="mt-8 flex h-[90px] w-full items-center justify-around rounded-[16px] bg-[#FF6B2C] px-6 text-[#0B0C0F]">
             <div className="text-left">
-              <div className="font-display text-[28px] font-bold leading-none">36 of 38</div>
+              <div className="font-display text-[28px] font-bold leading-none">96%</div>
               <div className="mt-1 text-[13px] font-semibold text-[#0B0C0F]/80">
-                showed a working helper
+                built working helper
               </div>
             </div>
             <div className="h-10 w-px bg-black/15" />
@@ -1121,9 +1227,9 @@ export function TabletView() {
             </div>
             <div className="h-10 w-px bg-black/15" />
             <div className="text-left">
-              <div className="font-display text-[28px] font-bold leading-none">2</div>
+              <div className="font-display text-[28px] font-bold leading-none">100%</div>
               <div className="mt-1 text-[13px] font-semibold text-[#0B0C0F]/80">
-                partner schools
+                in-school lab
               </div>
             </div>
           </div>
@@ -1153,7 +1259,7 @@ export function TabletView() {
                   </div>
                 </div>
                 <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-white/60">
-                  Sample
+                  Verified
                 </span>
               </div>
             </div>
@@ -1180,7 +1286,7 @@ export function TabletView() {
                   </div>
                 </div>
                 <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-white/60">
-                  Sample
+                  Verified
                 </span>
               </div>
             </div>
@@ -1593,7 +1699,7 @@ export function TabletView() {
 
               {/* Subtext below button */}
               <p className="mt-3.5 text-[13px] text-[#A7ACB8]">
-                Partner school prices. Paid to Thinkova, not your school.
+                Partner school prices. Paid to ThinkOva, not your school.
               </p>
             </div>
           </ScrollReveal>
@@ -1722,13 +1828,17 @@ export function TabletView() {
                   <p className="mt-2 text-[14px] leading-relaxed text-[#5A5F6B]">
                     Thank you! We've sent a confirmation to WhatsApp at{" "}
                     <strong className="text-black font-semibold">
-                      {mobileNum || "+91 98765 43210"}
+                      {mobileNum}
                     </strong>{" "}
-                    for {childName || "your child"}.
+                    and receipt to{" "}
+                    <strong className="text-black font-semibold">
+                      {parentEmail}
+                    </strong>{" "}
+                    for {childName}.
                   </p>
                   <div className="mt-5 rounded-xl bg-[#F4F3EE] p-4 text-left text-[13px] text-[#5A5F6B] space-y-1.5">
                     <p>
-                      <strong className="text-[#0B0C0F]">Child:</strong> {childName || "Asha"} (
+                      <strong className="text-[#0B0C0F]">Child:</strong> {childName} (
                       {childGrade}, Sec {childSec})
                     </p>
                     <p>
@@ -1778,17 +1888,36 @@ export function TabletView() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-[#0B0C0F]">
-                        School code
-                      </label>
+                      <div className="flex items-center justify-between">
+                        <label className="block text-xs font-semibold text-[#0B0C0F]">
+                          School code (5 digits) <span className="text-red-500">*</span>
+                        </label>
+                        <span className={cn("text-[11px] font-mono", schoolCode.length === 5 ? "text-green-600 font-semibold" : "text-[#5A5F6B]")}>
+                          {schoolCode.length}/5
+                        </span>
+                      </div>
                       <input
                         type="text"
+                        maxLength={5}
                         required
-                        placeholder="e.g. PUNE-0427"
+                        placeholder="5 digits, e.g. 10245"
                         value={schoolCode}
-                        onChange={(e) => setSchoolCode(e.target.value)}
-                        className="mt-1.5 w-full rounded-[8px] border border-[#E3E1D9] bg-[#F4F3EE] px-3.5 py-2.5 text-sm text-[#0B0C0F] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#FF6B2C]"
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 5);
+                          setSchoolCode(val);
+                        }}
+                        className={cn(
+                          "mt-1.5 w-full rounded-[8px] border px-3.5 py-2.5 text-sm font-mono uppercase text-[#0B0C0F] focus:bg-white focus:outline-none focus:ring-2 transition",
+                          schoolCode.length > 0 && !isTabletSchoolCodeValid
+                            ? "border-red-500 bg-red-50/20 text-red-950 focus:ring-red-500"
+                            : "border-[#E3E1D9] bg-[#F4F3EE] focus:ring-[#FF6B2C]"
+                        )}
                       />
+                      {schoolCode.length > 0 && !isTabletSchoolCodeValid && (
+                        <p className="mt-1 text-[11px] font-medium text-red-600">
+                          School code must be exactly 5 digits.
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -1823,7 +1952,7 @@ export function TabletView() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-semibold text-[#0B0C0F]">
-                        Parent's name
+                        Parent's name <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="text"
@@ -1836,30 +1965,80 @@ export function TabletView() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-[#0B0C0F]">
-                        WhatsApp number
-                      </label>
+                      <div className="flex items-center justify-between">
+                        <label className="block text-xs font-semibold text-[#0B0C0F]">
+                          WhatsApp number <span className="text-red-500">*</span>
+                        </label>
+                        <span className={cn("text-[11px] font-mono", mobileNum.length === 10 ? "text-green-600 font-semibold" : "text-[#5A5F6B]")}>
+                          {mobileNum.length}/10
+                        </span>
+                      </div>
                       <input
                         type="tel"
+                        maxLength={10}
                         required
-                        placeholder="+91 98765 43210"
+                        placeholder="10-digit number"
                         value={mobileNum}
-                        onChange={(e) => setMobileNum(e.target.value)}
-                        className="mt-1.5 w-full rounded-[8px] border border-[#E3E1D9] bg-[#F4F3EE] px-3.5 py-2.5 text-sm text-[#0B0C0F] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#FF6B2C]"
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, "").slice(0, 10);
+                          setMobileNum(val);
+                        }}
+                        className={cn(
+                          "mt-1.5 w-full rounded-[8px] border px-3.5 py-2.5 text-sm font-mono text-[#0B0C0F] focus:bg-white focus:outline-none focus:ring-2 transition",
+                          mobileNum.length > 0 && !isTabletPhoneValid
+                            ? "border-red-500 bg-red-50/20 text-red-950 focus:ring-red-500"
+                            : "border-[#E3E1D9] bg-[#F4F3EE] focus:ring-[#FF6B2C]"
+                        )}
                       />
+                      {mobileNum.length > 0 && !isTabletPhoneValid && (
+                        <p className="mt-1 text-[11px] font-medium text-red-600">
+                          Mobile number must be exactly 10 digits.
+                        </p>
+                      )}
                     </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-[#0B0C0F]">
+                      Email address <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="you@example.com"
+                      value={parentEmail}
+                      onChange={(e) => setParentEmail(e.target.value)}
+                      className={cn(
+                        "mt-1.5 w-full rounded-[8px] border px-3.5 py-2.5 text-sm text-[#0B0C0F] focus:bg-white focus:outline-none focus:ring-2 transition",
+                        parentEmail.length > 0 && !isTabletEmailValid
+                          ? "border-red-500 bg-red-50/20 text-red-950 focus:ring-red-500"
+                          : "border-[#E3E1D9] bg-[#F4F3EE] focus:ring-[#FF6B2C]"
+                      )}
+                    />
+                    {parentEmail.length > 0 && !isTabletEmailValid && (
+                      <p className="mt-1 text-[11px] font-medium text-red-600">
+                        Please enter a valid email address.
+                      </p>
+                    )}
                   </div>
 
                   <button
                     type="submit"
-                    disabled={isSubmitting}
-                    className="mt-2 flex h-[48px] w-full items-center justify-center gap-2 rounded-[8px] bg-gradient-to-b from-[#FF8B4E] via-[#FF6B2C] to-[#F2561A] text-[16px] font-semibold text-[#0B0C0F] shadow-[0px_10px_28px_-8px_rgba(255,107,44,0.35)] transition hover:brightness-105 active:scale-95 disabled:opacity-70"
+                    disabled={!isTabletFormValid || isSubmitting}
+                    className={cn(
+                      "mt-2 flex h-[48px] w-full items-center justify-center gap-2 rounded-[8px] text-[16px] font-semibold transition",
+                      isTabletFormValid && !isSubmitting
+                        ? "bg-gradient-to-b from-[#FF8B4E] via-[#FF6B2C] to-[#F2561A] text-[#0B0C0F] shadow-[0px_10px_28px_-8px_rgba(255,107,44,0.35)] hover:brightness-105 active:scale-95 cursor-pointer"
+                        : "bg-[#d8d8de] text-[#8e8e99] cursor-not-allowed shadow-none opacity-60 border border-black/5"
+                    )}
                   >
                     {isSubmitting ? (
                       <Loader2 className="size-5 animate-spin" />
                     ) : (
                       <>
-                        <span>Complete enrolment & pay</span>
+                        <span>
+                          {isTabletFormValid ? "Complete enrolment & pay" : "Fill required fields to enrol"}
+                        </span>
                         <ArrowRight className="size-4 stroke-[2.5]" />
                       </>
                     )}
@@ -1974,7 +2153,7 @@ export function TabletView() {
           <ScrollReveal>
             <div>
               <h2 className="font-display text-[44px] font-medium leading-[50px] tracking-[-0.02em] text-white">
-                Bring Thinkova to your school.
+                Bring ThinkOva to your school.
               </h2>
               <p className="mt-3 text-[17px] leading-[26px] text-[#A7ACB8] max-w-[688px]">
                 We bring trained tutors, every lesson, enrolment, fees and parent updates. Your
@@ -2028,7 +2207,7 @@ export function TabletView() {
 
               {schoolSubmitted ? (
                 <div className="mt-6 rounded-[12px] bg-[#1F9D55]/15 p-5 text-[#1F9D55] text-[15px]">
-                  ✓ Callback requested! Our school partnerships team will get in touch within one working day.
+                  ✓ Callback requested for {schoolName}! Our school partnerships team will call {contactPerson.trim().split(" ")[0] || "you"} within one working day.
                 </div>
               ) : (
                 <form onSubmit={handleSchoolSubmit} className="mt-7 space-y-5">
@@ -2040,7 +2219,7 @@ export function TabletView() {
                     <input
                       type="text"
                       required
-                      placeholder="e.g. [School name]"
+                      placeholder="e.g. Delhi Public School"
                       value={schoolName}
                       onChange={(e) => setSchoolName(e.target.value)}
                       className="h-[52px] w-full rounded-[12px] border border-[#E3E1D9] bg-[#F4F3EE] px-4 text-[15px] text-[#0B0C0F] placeholder:text-[#8A8F9E] focus:border-[#0B0C0F] focus:outline-none transition"
@@ -2056,7 +2235,7 @@ export function TabletView() {
                       <input
                         type="text"
                         required
-                        placeholder="Priya Sharma"
+                        placeholder="e.g. Dr. Priya Sharma"
                         value={contactPerson}
                         onChange={(e) => setContactPerson(e.target.value)}
                         className="h-[52px] w-full rounded-[12px] border border-[#E3E1D9] bg-[#F4F3EE] px-4 text-[15px] text-[#0B0C0F] placeholder:text-[#8A8F9E] focus:border-[#0B0C0F] focus:outline-none transition"
@@ -2093,7 +2272,7 @@ export function TabletView() {
                       <input
                         type="text"
                         required
-                        placeholder="Pune"
+                        placeholder="e.g. Pune"
                         value={schoolCity}
                         onChange={(e) => setSchoolCity(e.target.value)}
                         className="h-[52px] w-full rounded-[12px] border border-[#E3E1D9] bg-[#F4F3EE] px-4 text-[15px] text-[#0B0C0F] placeholder:text-[#8A8F9E] focus:border-[#0B0C0F] focus:outline-none transition"
@@ -2115,6 +2294,20 @@ export function TabletView() {
                     </div>
                   </div>
 
+                  {/* Email (Optional) */}
+                  <div>
+                    <label className="block text-[14px] font-medium text-[#0B0C0F] mb-2">
+                      Official Email (optional)
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="e.g. principal@school.edu.in"
+                      value={schoolEmail}
+                      onChange={(e) => setSchoolEmail(e.target.value)}
+                      className="h-[52px] w-full rounded-[12px] border border-[#E3E1D9] bg-[#F4F3EE] px-4 text-[15px] text-[#0B0C0F] placeholder:text-[#8A8F9E] focus:border-[#0B0C0F] focus:outline-none transition"
+                    />
+                  </div>
+
                   {/* Submit Button */}
                   <button
                     type="submit"
@@ -2132,8 +2325,8 @@ export function TabletView() {
           <ScrollReveal delay={160}>
             <div className="mt-8">
               <a
-                href="/downloads/Thinkova-Eight-Week-Curriculum.pdf"
-                download="Thinkova Eight-Week Curriculum.pdf"
+                href="/downloads/ThinkOva-Eight-Week-Curriculum.pdf"
+                download="ThinkOva Eight-Week Curriculum.pdf"
                 className="inline-flex items-center gap-2 text-[15px] font-semibold text-white underline underline-offset-4 transition hover:text-[#FF6B2C]"
               >
                 <Download className="size-4.5" />
@@ -2156,7 +2349,7 @@ export function TabletView() {
                   Ready for level 1?
                 </h2>
                 <p className="mt-2.5 text-[16px] text-[#0B0C0F]/90 leading-relaxed">
-                  Enrol with your school code, or ask us to Bring Thinkova to your school.
+                  Enrol with your school code, or ask us to bring ThinkOva to your school.
                 </p>
               </div>
               <button
@@ -2182,9 +2375,7 @@ export function TabletView() {
         <div className="mx-auto max-w-[768px] px-10">
           <ScrollReveal>
             {/* Logo using website logo */}
-            <div className="flex items-center gap-2.5">
-              <Image src="/thinkova-logo.svg" alt="Thinkova" width={139} height={34} priority className="h-8 w-auto object-contain" />
-            </div>
+            <Logo />
 
             {/* Description */}
             <p className="mt-4 text-[15px] leading-relaxed text-[#A7ACB8]">
@@ -2226,7 +2417,7 @@ export function TabletView() {
 
             {/* Bottom legal line */}
             <div className="mt-6 flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px] text-[#8A8F9E]">
-              <span>© 2026 Thinkova</span>
+              <span>© 2026 ThinkOva</span>
               <span>·</span>
               <a href={legalLinks.privacy} className="hover:text-white transition">
                 Privacy

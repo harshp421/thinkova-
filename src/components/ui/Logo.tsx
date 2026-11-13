@@ -1,21 +1,52 @@
 import Image from "next/image";
 import Link from "next/link";
+import { cn } from "@/lib/utils";
 
-export function Logo({ className }: { className?: string }) {
+interface LogoProps {
+  className?: string;
+  imageClassName?: string;
+  href?: string;
+  asLink?: boolean;
+}
+
+export function Logo({
+  className,
+  imageClassName,
+  href = "/",
+  asLink = true,
+}: LogoProps = {}) {
+  const content = (
+    <Image
+      src="/images/logo-full.png"
+      alt="thinkova"
+      width={147}
+      height={36}
+      priority
+      className={cn("h-8 sm:h-9 w-auto object-contain", imageClassName)}
+    />
+  );
+
+  if (!asLink) {
+    return (
+      <span
+        aria-label="Home"
+        className={cn("inline-flex items-center rounded-sm", className)}
+      >
+        {content}
+      </span>
+    );
+  }
+
   return (
     <Link
-      href="/"
-      aria-label="Thinkova home"
-      className={`inline-flex items-center transition hover:opacity-95 ${className || ""}`}
+      href={href}
+      aria-label="Home"
+      className={cn(
+        "inline-flex items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded-sm",
+        className
+      )}
     >
-      <Image
-        src="/thinkova-logo.svg"
-        alt="Thinkova"
-        width={139}
-        height={34}
-        priority
-        className="h-8 w-auto object-contain"
-      />
+      {content}
     </Link>
   );
 }

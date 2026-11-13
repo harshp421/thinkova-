@@ -2,25 +2,36 @@
 
 import { usePathname } from "next/navigation";
 import { siteConfig } from "@/data/site";
+import { Logo } from "@/components/ui/Logo";
 
 export function BottomCTABar() {
   const pathname = usePathname();
-  if (pathname === "/enrolled") return null;
+
+  // Strict whitelist: BottomCTABar is only meant for public marketing pages
+  // It must NEVER appear on internal learning, dashboard, courses, checkout, or auth pages.
+  if (!pathname) return null;
+
+  const isPublicMarketingPage =
+    pathname === "/" ||
+    pathname === "/curriculum" ||
+    pathname === "/partner-terms";
+
+  if (!isPublicMarketingPage) {
+    return null;
+  }
 
   return (
-    <div className="hidden lg:block fixed bottom-0 left-0 right-0 z-40 h-16 border-t border-white/[0.06] bg-ink/85 backdrop-blur">
+    <div className="hidden lg:block fixed bottom-0 left-0 right-0 z-40 h-16 border-t border-white/[0.08] bg-[#0B0C0F]/90 backdrop-blur-md">
       <div className="mx-auto flex h-full max-w-page items-center justify-between px-5 sm:px-8 min-[1344px]:px-0 gap-8">
-        {/* Left: school + batch info */}
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-white">
-            Thinkova at {siteConfig.schoolName}
-          </span>
+        {/* Left: Brand logo + course info matching Figma stick pad */}
+        <div className="flex items-center gap-3">
+          <Logo imageClassName="h-7 w-auto" />
           <span className="text-xs text-[#A7ACB8]">
-            Batch starts {siteConfig.batchStartDate} · 90 min a week
+            8-week AI course · 90 min a week
           </span>
         </div>
 
-        {/* Right group: price + WhatsApp + Enrol (matches Figma exactly) */}
+        {/* Right group: price + WhatsApp + Enrol (matches Figma stick pad image exactly) */}
         <div className="flex items-center gap-8">
           <div className="flex flex-col gap-0.5 items-start">
             <span className="text-sm font-semibold text-white">₹4,999</span>
