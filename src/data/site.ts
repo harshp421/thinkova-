@@ -33,6 +33,7 @@ export const siteConfig = {
   emailUrl: email ? `mailto:${email}` : "/#contact",
   emailLabel: email || "info@thinkova.ai",
   cityLabel: city || "",
+  backendUrl: process.env.NEXT_PUBLIC_BACKEND_URL || "http://172.169.233.17:8000",
 };
 
 export const navLinks: NavLink[] = [
