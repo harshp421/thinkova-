@@ -32,15 +32,6 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-  async rewrites() {
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://172.169.233.17:8000";
-    return [
-      {
-        source: "/backend-api/:path*",
-        destination: `${backendUrl}/api/:path*`,
-      },
-    ];
-  },
 };
 
 export default nextConfig;
