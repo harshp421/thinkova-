@@ -16,6 +16,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { AVAILABLE_CLASSMATES } from "@/data/events-data";
+import { LoadingSessionOverlay } from "@/components/ui/LoadingSessionOverlay";
 
 export default function HackathonRegistrationPage() {
   const { activeStudent } = useAuth();
@@ -98,7 +99,9 @@ export default function HackathonRegistrationPage() {
   };
 
   return (
-    <div className="flex min-h-screen w-full bg-[#F4F3EE] text-[#0B0C0F] selection:bg-[#FF6026] selection:text-white">
+    <div className="relative flex min-h-screen w-full bg-[#F4F3EE] text-[#0B0C0F] selection:bg-[#FF6026] selection:text-white">
+      <LoadingSessionOverlay isOpen={isRegistering} />
+
       {/* App Sidebar with 'events' active */}
       <AppSidebar activeItem="events" />
 

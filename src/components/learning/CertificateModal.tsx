@@ -25,14 +25,51 @@ export function CertificateModal({
   const dateStr = certificate.issuedAt || "21 Nov 2026";
   const tutorStr = certificate.tutorName || "Ms Ananya Rao";
 
-  const handleDownloadCertificate = () => {
-    const url = `/api/learning/certificates/download?studentId=${certificate.studentId}&courseId=${certificate.courseId}&studentName=${encodeURIComponent(studentName)}`;
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `ThinkOva-Certificate-${studentName.replace(/\s+/g, "-")}.svg`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleDownloadPNG = async () => {
+    try {
+      setIsExporting(true);
+      const url = `/api/learning/certificates/download?studentId=${certificate.studentId}&courseId=${certificate.courseId}&studentName=${encodeURIComponent(studentName)}`;
+      const res = await fetch(url);
+      const svgText = await res.text();
+
+      const img = new Image();
+      const svgBlob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
+      const blobUrl = URL.createObjectURL(svgBlob);
+
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 2400;
+        canvas.height = 1700;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.fillStyle = "#FCFBF7";
+          ctx.fillRect(0, 0, 2400, 1700);
+          ctx.drawImage(img, 0, 0, 2400, 1700);
+          canvas.toBlob((pngBlob) => {
+            if (pngBlob) {
+              const pngUrl = URL.createObjectURL(pngBlob);
+              const a = document.createElement("a");
+              a.href = pngUrl;
+              a.download = `ThinkOva-Certificate-${studentName.replace(/\s+/g, "-")}.png`;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(pngUrl);
+            }
+            setIsExporting(false);
+          }, "image/png");
+        }
+        URL.revokeObjectURL(blobUrl);
+      };
+      img.onerror = () => {
+        setIsExporting(false);
+      };
+      img.src = blobUrl;
+    } catch {
+      setIsExporting(false);
+    }
   };
 
   const handlePrint = () => {
@@ -150,7 +187,7 @@ export function CertificateModal({
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
           <div className="text-xs text-[#5A5F6B] text-center sm:text-left">
             <p>Verification Code: <span className="font-mono font-bold text-[#0B0C0F]">{certCode}</span></p>
-            <p className="text-[11px] text-[#A7ACB8]">Direct vector SVG and printable format supported.</p>
+            <p className="text-[11px] text-[#A7ACB8]">High-resolution PNG and printable PDF format supported.</p>
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
@@ -160,16 +197,17 @@ export function CertificateModal({
               className="flex items-center gap-1.5 rounded-full border border-[#E3E0D9] bg-white hover:bg-[#FAF9F5] px-4 py-2.5 text-xs font-semibold text-[#0B0C0F] transition cursor-pointer"
             >
               <Printer className="size-3.5" />
-              <span>Print</span>
+              <span>Save as PDF / Print</span>
             </button>
 
             <button
               type="button"
-              onClick={handleDownloadCertificate}
-              className="flex items-center gap-1.5 rounded-full bg-[#FF6026] hover:bg-[#E8531C] px-5 py-2.5 text-xs font-semibold text-white shadow-sm transition active:scale-95 cursor-pointer"
+              disabled={isExporting}
+              onClick={handleDownloadPNG}
+              className="flex items-center gap-1.5 rounded-full bg-[#FF6026] hover:bg-[#E8531C] disabled:opacity-50 px-5 py-2.5 text-xs font-semibold text-white shadow-sm transition active:scale-95 cursor-pointer"
             >
               <Download className="size-3.5" />
-              <span>Download certificate (.svg)</span>
+              <span>{isExporting ? "Exporting PNG..." : "Download PNG (.png)"}</span>
             </button>
           </div>
         </div>

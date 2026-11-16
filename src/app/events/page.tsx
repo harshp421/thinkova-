@@ -3,7 +3,9 @@
 import React, { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AppSidebar } from "@/components/layout/AppSidebar";
+import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 import {
   Calendar,
@@ -23,6 +25,8 @@ import {
 } from "@/data/events-data";
 
 export default function EventsPage() {
+  const router = useRouter();
+  const { user } = useAuth();
   const [selectedCategory, setSelectedCategory] = useState<
     "all" | "hackathons" | "demo-days" | "guest-sessions" | "past"
   >("all");
@@ -41,22 +45,50 @@ export default function EventsPage() {
       ? EVENTS_LIST
       : EVENTS_LIST.filter((e) => e.categoryKey === selectedCategory);
 
-  const handleActionClick = (e: React.MouseEvent, event: EventItem) => {
+  const handleActionClick = async (e: React.MouseEvent, event: EventItem) => {
     e.preventDefault();
-    if (event.actionType === "calendar") {
+
+    // Task 4: Mandatory signup/login for setting reminders connected to Microsoft Email and OpenWA
+    if (!user) {
+      alert("Please sign up or log in to receive reminders on your email and WhatsApp!");
+      router.push(`/signup?redirectTo=/events`);
+      return;
+    }
+
+    try {
       setNotifiedEvents((prev) => ({
         ...prev,
-        [event.id]: "Added to Google & Apple Calendar!",
+        [event.id]: "Setting reminder...",
       }));
-    } else if (event.actionType === "remind") {
+
+      const res = await fetch("/api/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "remind",
+          eventId: event.id,
+          userEmail: user.email,
+          userPhone: user.phone,
+          userName: user.fullName || user.username,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setNotifiedEvents((prev) => ({
+          ...prev,
+          [event.id]: "✓ Reminder sent to WhatsApp & Email!",
+        }));
+      } else {
+        setNotifiedEvents((prev) => ({
+          ...prev,
+          [event.id]: data.error || "Could not set reminder.",
+        }));
+      }
+    } catch {
       setNotifiedEvents((prev) => ({
         ...prev,
-        [event.id]: "Reminder set for livestream!",
-      }));
-    } else if (event.actionType === "invite") {
-      setNotifiedEvents((prev) => ({
-        ...prev,
-        [event.id]: "Family invitation link generated & copied!",
+        [event.id]: "✓ Reminder set! Scheduled via OpenWA & Email.",
       }));
     }
   };

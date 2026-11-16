@@ -22,24 +22,41 @@ import {
 } from "lucide-react";
 import { StudentPersona } from "@/../backend/database/types";
 import { DeviceSpecimenTelemetry } from "@/app/api/profile/device-specimen/route";
+import { LoadingSessionOverlay } from "@/components/ui/LoadingSessionOverlay";
 
 export default function ProfilePage() {
   const router = useRouter();
-  const { user, activeStudent, students, setActiveStudent, logout } = useAuth();
+  const { user, activeStudent, students, setActiveStudent, logout, updateUserProfile } = useAuth();
 
   // Dynamic Learner Form State matching Image
-  const [fullName, setFullName] = useState(activeStudent?.fullName || "Aarav Sharma");
-  const [grade, setGrade] = useState(`Grade ${activeStudent?.currentGrade || 6}`);
+  const [fullName, setFullName] = useState(activeStudent?.fullName || "");
+  const [grade, setGrade] = useState(activeStudent?.currentGrade ? `Grade ${activeStudent.currentGrade}` : "Grade 6");
   const [schoolName, setSchoolName] = useState(
-    activeStudent?.schoolName || "Banyan Grove School, Pune"
+    activeStudent?.schoolName || ""
   );
   const [language, setLanguage] = useState("English");
   const [persona, setPersona] = useState<StudentPersona>("LOGICIAN");
 
   // Parent Account State
-  const [parentName, setParentName] = useState(user?.fullName || "Priya Sharma");
-  const [parentPhone, setParentPhone] = useState("+91 98•••••821");
+  const [parentName, setParentName] = useState(user?.fullName || "");
+  const [parentPhone, setParentPhone] = useState(user?.phone || "");
   const [isEditingPhone, setIsEditingPhone] = useState(false);
+
+  // Sync state when user or activeStudent loads
+  useEffect(() => {
+    if (user) {
+      if (user.fullName) setParentName(user.fullName);
+      if (user.phone) setParentPhone(user.phone);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (activeStudent) {
+      if (activeStudent.fullName) setFullName(activeStudent.fullName);
+      if (activeStudent.currentGrade) setGrade(`Grade ${activeStudent.currentGrade}`);
+      if (activeStudent.schoolName) setSchoolName(activeStudent.schoolName);
+    }
+  }, [activeStudent]);
 
   // Reminders Toggles State matching Image
   const [reminders, setReminders] = useState({
@@ -61,6 +78,7 @@ export default function ProfilePage() {
   // Save Feedback
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState("");
+  const [saveErrorMessage, setSaveErrorMessage] = useState("");
 
   // Certificates list matching Image
   const certificatesList = [
@@ -85,7 +103,8 @@ export default function ProfilePage() {
   useEffect(() => {
     async function loadSpecimen() {
       try {
-        const res = await fetch("/api/profile/device-specimen?studentId=aarav");
+        const studentQuery = activeStudent?.id || "aarav";
+        const res = await fetch(`/api/profile/device-specimen?studentId=${studentQuery}`);
         if (res.ok) {
           const data = await res.json();
           if (data.specimen) {
@@ -100,7 +119,7 @@ export default function ProfilePage() {
       }
     }
     loadSpecimen();
-  }, []);
+  }, [activeStudent]);
 
   // Handle reminder toggle
   const toggleReminder = (key: keyof typeof reminders) => {
@@ -115,10 +134,11 @@ export default function ProfilePage() {
     setIsRunningSpecimenCheck(true);
     setSpecimenFeedback(null);
     try {
+      const studentQuery = activeStudent?.id || "aarav";
       const res = await fetch("/api/profile/device-specimen", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "run_diagnostics", studentId: "aarav" }),
+        body: JSON.stringify({ action: "run_diagnostics", studentId: studentQuery }),
       });
       if (res.ok) {
         setSpecimenFeedback("✓ Handshake verified: WebSerial & WebUSB connected to school rover kit station.");
@@ -134,64 +154,125 @@ export default function ProfilePage() {
   const handleSaveChanges = async () => {
     setIsSaving(true);
     setSaveSuccessMessage("");
+    setSaveErrorMessage("");
     try {
-      await fetch("/api/profile/device-specimen", {
+      // 1. Update user profile (phone & parent name) and student details
+      const profileRes = await fetch("/api/profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "tune_persona",
-          studentId: "aarav",
+          phone: parentPhone.trim(),
+          fullName: parentName.trim(),
+          studentId: activeStudent?.id,
+          studentName: fullName.trim(),
+          grade,
+          schoolName: schoolName.trim(),
           persona,
           reminders,
-          schoolName,
-          fullName,
         }),
       });
-      setSaveSuccessMessage("✓ Profile settings and persona saved successfully!");
+
+      const profileData = await profileRes.json();
+      if (!profileRes.ok) {
+        setSaveErrorMessage(profileData.error || "Failed to update profile.");
+        setIsSaving(false);
+        return;
+      }
+
+      // Update auth context state so UI immediately reflects updated number and name
+      updateUserProfile({
+        phone: parentPhone.trim(),
+        fullName: parentName.trim(),
+      });
+
+      // 2. Also sync specimen tuning
+      try {
+        await fetch("/api/profile/device-specimen", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "tune_persona",
+            studentId: activeStudent?.id || "aarav",
+            persona,
+            reminders,
+            schoolName,
+            fullName,
+          }),
+        });
+      } catch {
+        // Non-critical
+      }
+
+      setSaveSuccessMessage("✓ Mobile number and profile settings saved successfully!");
       setTimeout(() => setSaveSuccessMessage(""), 4000);
-    } catch {
-      setSaveSuccessMessage("✓ Profile settings and persona saved successfully!");
-      setTimeout(() => setSaveSuccessMessage(""), 4000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error saving profile";
+      setSaveErrorMessage(msg);
     } finally {
       setIsSaving(false);
     }
   };
 
-  // Download individual certificate
+  // Download individual certificate as PNG
   const handleDownloadCert = (title: string) => {
-    const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+    const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600">
       <defs>
-        <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#FCFBF7" />
+          <stop offset="100%" stop-color="#F4F1EA" />
+        </linearGradient>
+        <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" stop-color="#FF6B2C" />
           <stop offset="100%" stop-color="#E8531C" />
         </linearGradient>
       </defs>
-      <rect width="400" height="400" rx="32" fill="#0B0C0F" />
-      <circle cx="200" cy="160" r="80" fill="url(#grad)" />
-      <text x="200" y="165" font-family="system-ui, sans-serif" font-size="32" font-weight="bold" fill="#FFFFFF" text-anchor="middle">✦</text>
-      <text x="200" y="280" font-family="system-ui, sans-serif" font-size="18" font-weight="bold" fill="#FFFFFF" text-anchor="middle">${title}</text>
-      <text x="200" y="310" font-family="system-ui, sans-serif" font-size="13" fill="#FF6B2C" text-anchor="middle">Learner: ${fullName}</text>
-      <text x="200" y="335" font-family="system-ui, sans-serif" font-size="11" fill="#A7ACB8" text-anchor="middle">ThinkOva Verified Credential</text>
+      <rect width="800" height="600" rx="24" fill="url(#bgGrad)" stroke="#E3E0D9" stroke-width="4" />
+      <rect x="24" y="24" width="752" height="552" rx="16" fill="none" stroke="#FF6B2C" stroke-width="2" stroke-dasharray="6 4" opacity="0.6" />
+      <circle cx="400" cy="140" r="48" fill="url(#brandGrad)" />
+      <text x="400" y="152" font-family="system-ui, -apple-system, sans-serif" font-size="32" font-weight="bold" fill="#FFFFFF" text-anchor="middle">✦</text>
+      <text x="400" y="225" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="800" letter-spacing="3" fill="#FF6B2C" text-anchor="middle">THINKOVA LEARNING LABS</text>
+      <text x="400" y="260" font-family="Georgia, serif" font-size="28" font-weight="bold" fill="#0B0C0F" text-anchor="middle">Certificate of Completion</text>
+      <text x="400" y="295" font-family="system-ui, -apple-system, sans-serif" font-size="14" fill="#5A5F6B" text-anchor="middle">This verifies that</text>
+      <text x="400" y="345" font-family="Georgia, serif" font-size="34" font-weight="bold" fill="#FF6B2C" text-anchor="middle">${fullName}</text>
+      <text x="400" y="385" font-family="system-ui, -apple-system, sans-serif" font-size="15" fill="#0B0C0F" text-anchor="middle">has successfully mastered and verified</text>
+      <text x="400" y="420" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="bold" fill="#0B0C0F" text-anchor="middle">${title}</text>
+      <text x="400" y="520" font-family="monospace" font-size="11" fill="#A7ACB8" text-anchor="middle">Credential ID: THINKOVA-CERT-VERIFIED · Issue Date: 2026</text>
     </svg>`;
 
-    const blob = new Blob([svgContent], { type: "image/svg+xml" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `ThinkOva-Certificate-${title.replace(/\s+/g, "-")}.svg`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const img = new Image();
+    const svgBlob = new Blob([svgContent], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(svgBlob);
+
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1600;
+      canvas.height = 1200;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#FCFBF7";
+        ctx.fillRect(0, 0, 1600, 1200);
+        ctx.drawImage(img, 0, 0, 1600, 1200);
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const pngUrl = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = pngUrl;
+            a.download = `ThinkOva-Certificate-${title.replace(/\s+/g, "-")}.png`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(pngUrl);
+          }
+        }, "image/png");
+      }
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
   };
 
-  // Switch learner to Meera
+  // Switch learner strictly to who-is-learning
   const handleSwitchLearner = () => {
-    const meera = students.find((s) => s.fullName.toLowerCase().includes("meera"));
-    if (meera) {
-      setActiveStudent(meera);
-    }
-    router.push("/learning");
+    router.push("/who-is-learning");
   };
 
   // Sign out handler
@@ -203,7 +284,14 @@ export default function ProfilePage() {
   };
 
   return (
-    <div className="flex min-h-screen w-full bg-[#F4F3EE] text-[#0B0C0F] selection:bg-[#FF6026] selection:text-white">
+    <div className="relative flex min-h-screen w-full bg-[#F4F3EE] text-[#0B0C0F] selection:bg-[#FF6026] selection:text-white">
+      {/* Dull backdrop + animated hourglass during profile save/sync */}
+      <LoadingSessionOverlay
+        isOpen={isSaving}
+        message="Saving profile changes..."
+        subMessage="Updating parent phone, student details, and syncing reminder settings."
+      />
+
       {/* App Sidebar with 'profile' active */}
       <AppSidebar activeItem="profile" />
 
@@ -256,6 +344,12 @@ export default function ProfilePage() {
             <div className="rounded-2xl border border-[#1F9D55]/30 bg-[#E3F5E8] p-4 flex items-center gap-2.5 text-xs text-[#1F9D55] animate-scale-in">
               <CheckCircle2 className="size-4 shrink-0" />
               <span>{saveSuccessMessage}</span>
+            </div>
+          )}
+          {saveErrorMessage && (
+            <div className="rounded-2xl border border-[#EF4444]/30 bg-[#FEE2E2] p-4 flex items-center gap-2.5 text-xs text-[#EF4444] animate-scale-in">
+              <X className="size-4 shrink-0" />
+              <span>{saveErrorMessage}</span>
             </div>
           )}
 

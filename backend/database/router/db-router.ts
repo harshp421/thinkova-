@@ -280,5 +280,11 @@ export class DatabaseRouter {
   }
 }
 
-export const dbRouter = new DatabaseRouter();
+declare global {
+  // eslint-disable-next-line no-var
+  var __THINKOVA_DB_ROUTER__: DatabaseRouter | undefined;
+}
+
+export const dbRouter = globalThis.__THINKOVA_DB_ROUTER__ ?? new DatabaseRouter();
+globalThis.__THINKOVA_DB_ROUTER__ = dbRouter;
 

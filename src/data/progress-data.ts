@@ -222,20 +222,74 @@ export const CANONICAL_COURSES_PROGRESS: Record<string, StudentProgressSummary> 
 };
 
 export function getStudentProgressData(
-  studentId: string = "aarav",
+  studentId: string = "student",
   courseId: string = "ai-for-young-creators",
-  studentName: string = "Aarav Sharma"
+  studentName: string = "Learner",
+  completedLevels?: number
 ): StudentProgressSummary {
   const base =
     CANONICAL_COURSES_PROGRESS[courseId] ||
     CANONICAL_COURSES_PROGRESS["ai-for-young-creators"]!;
 
+  // If studentId is "aarav" and no explicit completedLevels passed, preserve canonical demo data
+  if (studentId === "aarav" && completedLevels === undefined) {
+    return {
+      ...base,
+      certificate: {
+        ...base.certificate,
+        studentName: studentName || "Aarav Sharma",
+        studentId: studentId || "aarav",
+      },
+    };
+  }
+
+  // For all new students, start dynamically according to completed levels (default: 0 / Level 1)
+  const levelsDone = completedLevels !== undefined ? Math.max(0, Math.min(8, completedLevels)) : 0;
+  const lessonsPerLevel = 5;
+  const lessonsDone = levelsDone * lessonsPerLevel;
+  const overallPercentage = Math.round((levelsDone / 8) * 100);
+
+  const dynamicPathSteps = base.pathSteps.map((step, idx) => {
+    const weekNum = idx + 1;
+    let status: "completed" | "active" | "upcoming" = "upcoming";
+    if (weekNum <= levelsDone) {
+      status = "completed";
+    } else if (weekNum === levelsDone + 1) {
+      status = "active";
+    }
+    return {
+      ...step,
+      status,
+    };
+  });
+
+  const level1BuildTask = {
+    id: "task-rev-1",
+    title: "Problem map and safety pledge",
+    levelNumber: 1,
+    levelDisplay: "Level 1",
+    badgeLabel: levelsDone >= 1 ? "Great" : "Due Fri",
+    badgeType: (levelsDone >= 1 ? "great" : "due") as "great" | "due",
+    actionLabel: (levelsDone >= 1 ? "View" : "Open") as "View" | "Open",
+    taskId: "level-1-problem-map",
+  };
+
   return {
     ...base,
+    lessonsDone,
+    levelsDone,
+    timeLearning: `${levelsDone * 3} h 00 m`,
+    buildTasksReviewed: Math.max(0, levelsDone - 1),
+    overallPercentage,
+    pathSteps: dynamicPathSteps,
+    buildTasks: levelsDone === 0 ? [level1BuildTask] : base.buildTasks.slice(0, levelsDone + 1),
     certificate: {
       ...base.certificate,
-      studentName: studentName || "Aarav Sharma",
-      studentId: studentId || "aarav",
+      studentName: studentName || "Learner",
+      studentId: studentId || "student",
+      levelsCompleted: levelsDone,
+      completionPercentage: overallPercentage,
+      isUnlocked: levelsDone >= 8,
     },
   };
 }

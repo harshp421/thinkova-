@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check, Loader2 } from "lucide-react";
 import { Logo } from "@/components/ui/Logo";
 import { useAuth } from "@/lib/auth-context";
+import { LoadingSessionOverlay } from "@/components/ui/LoadingSessionOverlay";
 
 interface TrackTopic {
   id: string;
@@ -24,16 +25,33 @@ const topics: TrackTopic[] = [
 export default function TellUsChildPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const isAddingSibling = searchParams.get("sibling") === "true";
+  const isAddingSibling =
+    searchParams.get("sibling") === "true" ||
+    searchParams.get("addSibling") === "true" ||
+    searchParams.get("action") === "add";
 
-  const { addStudent } = useAuth();
+  const { user, students, activeStudent, isLoading: authLoading, addStudent } = useAuth();
 
-  const [fullName, setFullName] = useState("Aarav Sharma");
+  const [fullName, setFullName] = useState("");
+  const [schoolName, setSchoolName] = useState("");
   const [selectedGrade, setSelectedGrade] = useState<number>(6);
   const [selectedTopics, setSelectedTopics] = useState<string[]>(["robotics", "ai"]);
   const [agreedToSafety, setAgreedToSafety] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // If user already has ward registered and is not explicitly adding a sibling,
+  // do not show this page - redirect to who-is-learning.
+  // If user is not logged in, redirect to signup.
+  useEffect(() => {
+    if (!authLoading) {
+      if (!user) {
+        router.replace("/signup?redirectTo=/tell-us-child");
+      } else if ((students.length > 0 || activeStudent) && !isAddingSibling) {
+        router.replace("/who-is-learning");
+      }
+    }
+  }, [authLoading, user, students, activeStudent, isAddingSibling, router]);
 
   const toggleTopic = (id: string) => {
     if (selectedTopics.includes(id)) {
@@ -63,7 +81,7 @@ export default function TellUsChildPage() {
     const result = await addStudent({
       fullName: fullName.trim(),
       currentGrade: selectedGrade,
-      schoolName: "The Bishop's School",
+      schoolName: schoolName.trim() || "Partner School",
       preferredTrack: primaryTrack,
       priorExperience: "beginner",
     });
@@ -82,11 +100,29 @@ export default function TellUsChildPage() {
     }
   };
 
+  if ((authLoading && !user) || (!isAddingSibling && user && (students.length > 0 || activeStudent))) {
+    return (
+      <div className="relative flex min-h-screen w-full items-center justify-center bg-[#F8F7F4]">
+        <LoadingSessionOverlay
+          isOpen={true}
+          message="Loading child profile..."
+          subMessage="Preparing curriculum and learning levels."
+        />
+      </div>
+    );
+  }
+
   // Dynamic matching count: 5 courses total for grade, topics match
   const matchingCoursesCount = Math.max(1, selectedTopics.length);
 
   return (
-    <div className="flex min-h-screen w-full flex-col lg:flex-row bg-[#F8F7F4] text-[#0B0C0F]">
+    <div className="relative flex min-h-screen w-full flex-col lg:flex-row bg-[#F8F7F4] text-[#0B0C0F]">
+      {/* Dull backdrop + animated hourglass on submit */}
+      <LoadingSessionOverlay
+        isOpen={isLoading}
+        message="Saving child's profile..."
+        subMessage="Setting up learning tracks and curriculum recommendation."
+      />
       {/* Left Column: Dark Photo Showcase matching Figma Image 3 */}
       <div className="relative flex w-full flex-col justify-between overflow-hidden bg-[#0B0C0F] p-8 sm:p-12 lg:w-1/2 lg:min-h-screen lg:p-16">
         <Image
@@ -155,7 +191,7 @@ export default function TellUsChildPage() {
                 type="text"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                placeholder="e.g. Aarav Sharma"
+                placeholder="Enter your child's full name"
                 required
                 className="w-full rounded-xl border border-[#DCD8CF] bg-white px-4 py-3 text-sm text-[#0B0C0F] placeholder-[#8F94A0] shadow-sm outline-none transition focus:border-[#FF6026] focus:ring-2 focus:ring-[#FF6026]/15"
               />

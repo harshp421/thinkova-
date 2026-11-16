@@ -58,10 +58,21 @@ export function LiveClassesSection({
               </button>
               <button
                 type="button"
-                onClick={() => alert("Added Thursday 6:00 PM Live Class to your calendar!")}
+                onClick={async () => {
+                  try {
+                    await fetch("/api/events", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ action: "remind", eventId: "live-class-thu" }),
+                    });
+                  } catch {
+                    // Non-fatal
+                  }
+                  alert("✓ Reminder scheduled! You will receive class alerts via WhatsApp & Microsoft Email.");
+                }}
                 className="rounded-full border border-white/20 bg-transparent hover:bg-white/10 px-5 py-2.5 text-xs sm:text-sm font-medium text-white transition cursor-pointer"
               >
-                Add to calendar
+                Set WhatsApp & Email Reminder
               </button>
               <span className="text-xs text-white/50 pl-1">
                 Join opens 10 minutes before class

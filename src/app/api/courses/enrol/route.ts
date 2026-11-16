@@ -6,6 +6,13 @@ import { allCourses, tracksData } from "@/data/tracks";
 export async function POST(req: NextRequest) {
   try {
     const session = await getSessionFromRequest(req);
+    if (!session?.userId) {
+      return NextResponse.json(
+        { error: "Please sign up or log in to enrol in a course." },
+        { status: 401 }
+      );
+    }
+
     const body = await req.json();
 
     const studentId = String(body.studentId || "").trim();
@@ -22,7 +29,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Student profile not found." }, { status: 404 });
     }
 
-    const parentUserId = session?.userId || student.parentUserId || "usr_demo_parent";
+    const parentUserId = session.userId;
 
     // Find course title and pricing
     const matchedCourse = allCourses.find((c) => c.id === courseId) || allCourses[0];

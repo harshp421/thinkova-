@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -19,11 +19,19 @@ import { AppSidebar } from "@/components/layout/AppSidebar";
 import { useAuth } from "@/lib/auth-context";
 import { tracksData, allCourses, Course } from "@/data/tracks";
 import { cn } from "@/lib/utils";
+import { LoadingSessionOverlay } from "@/components/ui/LoadingSessionOverlay";
 
 export default function ExplorePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { activeStudent } = useAuth();
+  const { user, activeStudent, isLoading: authLoading } = useAuth();
+
+  // Task 2: Mandatory login or signup to explore courses
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.replace("/login?redirectTo=/explore");
+    }
+  }, [authLoading, user, router]);
 
   const initialTrack = searchParams.get("track") || "all";
   const [selectedTrack, setSelectedTrack] = useState<string>(initialTrack);
@@ -33,11 +41,15 @@ export default function ExplorePage() {
   const [filterKitOnly, setFilterKitOnly] = useState(false);
   const [filterStartsThisMonth, setFilterStartsThisMonth] = useState(false);
 
-  const studentName = activeStudent?.fullName || "Aarav Sharma";
+  const studentName = activeStudent?.fullName || user?.fullName || "Learner";
 
-  // Filter courses based on track, grade, search and pills
+  // Filter courses based on track, grade, search and pills in real-time
   const filteredCourses = useMemo(() => {
     const list = allCourses.filter((course) => {
+      // Real-time Class / Grade filter
+      if (selectedGrade && (selectedGrade < course.minGrade || selectedGrade > course.maxGrade)) {
+        return false;
+      }
       // Track filter
       if (selectedTrack !== "all" && course.trackId !== selectedTrack) {
         return false;
@@ -47,8 +59,9 @@ export default function ExplorePage() {
         const query = searchQuery.toLowerCase();
         const matchesTitle = course.title.toLowerCase().includes(query);
         const matchesTrack = course.trackName.toLowerCase().includes(query);
-        const matchesDesc = course.whatTheyBuild.toLowerCase().includes(query);
-        if (!matchesTitle && !matchesTrack && !matchesDesc) return false;
+        const matchesDesc = (course.whatTheyBuild || "").toLowerCase().includes(query);
+        const matchesSummary = (course.summary || "").toLowerCase().includes(query);
+        if (!matchesTitle && !matchesTrack && !matchesDesc && !matchesSummary) return false;
       }
       // Kit included filter
       if (filterKitOnly && !course.kitIncluded) {
@@ -74,11 +87,9 @@ export default function ExplorePage() {
     }
 
     return list;
-  }, [selectedTrack, searchQuery, filterKitOnly]);
+  }, [selectedTrack, selectedGrade, searchQuery, filterKitOnly]);
 
-  const fitGradeCount = allCourses.filter(
-    (c) => selectedGrade >= c.minGrade && selectedGrade <= c.maxGrade
-  ).length;
+  const fitGradeCount = filteredCourses.length;
   const olderGradeCount = allCourses.length - fitGradeCount;
 
   const trackTabs = [
@@ -89,6 +100,18 @@ export default function ExplorePage() {
     { id: "games", label: "Game Design", count: "2 courses", icon: Gamepad2 },
     { id: "design", label: "Product & 3D", count: "2 courses", icon: Box },
   ];
+
+  if (authLoading && !user) {
+    return (
+      <div className="relative flex min-h-screen w-full items-center justify-center bg-[#F9F8F5]">
+        <LoadingSessionOverlay
+          isOpen={true}
+          message="Loading course catalogue..."
+          subMessage="Fetching tracks and curriculum for your grade."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen w-full bg-[#F9F8F5] text-[#0B0C0F] selection:bg-[#FF6026] selection:text-white">
@@ -257,18 +280,29 @@ export default function ExplorePage() {
           </div>
         </div>
 
-        {/* 2x3 Grid of Course Cards (matching Image 2) */}
+        {/* Grid of Course Cards (matching Image 2) */}
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredCourses.slice(0, 6).map((course, idx) => {
-            const isEnrolled = course.id === "ai-study-helper";
+          {filteredCourses.map((course, idx) => {
+            let isEnrolled = false;
+            if (typeof window !== "undefined") {
+              try {
+                const stored = JSON.parse(localStorage.getItem("thinkova_enrolled_courses") || "[]");
+                if (stored.includes(course.id)) isEnrolled = true;
+              } catch {
+                // Ignore
+              }
+            }
+            if (activeStudent?.activeEnrollment && activeStudent.preferredTrack === course.trackId) {
+              isEnrolled = true;
+            }
             const isPopular = course.id === "robotics-starter";
 
             return (
               <div
                 key={course.id}
                 onClick={() => {
-                  if (isEnrolled) {
-                    router.push(`/learning/${activeStudent?.id || "aarav"}`);
+                  if (isEnrolled && activeStudent?.id) {
+                    router.push(`/learning/${activeStudent.id}`);
                   } else {
                     router.push(`/courses/${course.id}`);
                   }
@@ -349,8 +383,8 @@ export default function ExplorePage() {
                     <button
                       type="button"
                       onClick={() => {
-                        if (isEnrolled) {
-                          router.push(`/learning/${activeStudent?.id || "aarav"}`);
+                        if (isEnrolled && activeStudent?.id) {
+                          router.push(`/learning/${activeStudent.id}`);
                         } else {
                           router.push(`/courses/${course.id}`);
                         }

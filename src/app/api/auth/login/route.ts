@@ -18,31 +18,15 @@ export async function POST(req: NextRequest) {
       user = await dbManager.commerce.getUserByPhone(identifier);
     }
 
-    // If user does not exist yet, auto-provision demo or new parent for frictionless sign-in
+    // Check if user exists in dynamic database layer. If not, reject login and prompt signup.
     if (!user) {
-      const email = identifier.includes("@") ? identifier.toLowerCase() : `${identifier.replace(/\D/g, "") || "9820011223"}@parent.thinkova.ai`;
-      const phone = identifier.includes("@") ? "9820011223" : identifier;
-      const emailPrefix = identifier.split("@")[0] || "parent";
-      const fullName = identifier.includes("@")
-        ? emailPrefix.replace(/[._]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
-        : `Parent ${identifier.slice(-4)}`;
-
-      const firstName = fullName.split(" ")[0] || "parent";
-      const newUser = {
-        id: `usr_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        fullName,
-        username: firstName.toLowerCase(),
-        email,
-        phone,
-        role: "PARENT" as const,
-        isPhoneVerified: true,
-        isEmailVerified: true,
-        consentTimestamp: new Date(),
-        createdAt: new Date(),
-      };
-
-      await dbManager.commerce.upsertUser(newUser);
-      user = newUser;
+      return NextResponse.json(
+        {
+          error: "No account found with this email. Please sign up to create your parent account.",
+          code: "ACCOUNT_NOT_FOUND",
+        },
+        { status: 404 }
+      );
     }
 
     // Check for saved students

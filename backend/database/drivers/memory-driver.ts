@@ -6,6 +6,11 @@ import type {
   QueryOptions,
 } from "./interface";
 
+declare global {
+  // eslint-disable-next-line no-var
+  var __THINKOVA_GLOBAL_MEMORY_STORE__: Map<string, Map<string, unknown>> | undefined;
+}
+
 /**
  * High-Performance In-Memory Driver
  * Zero-dependency, thread-safe, synchronous/asynchronous in-memory engine.
@@ -16,11 +21,15 @@ export class MemoryDatabaseDriver implements IDatabaseDriver {
   public readonly dialect: SupportedDialect = "memory";
 
   // Collection name -> Map<id, Record>
-  private store: Map<string, Map<string, unknown>> = new Map();
+  private store: Map<string, Map<string, unknown>>;
   private isConnected: boolean = true;
 
   constructor() {
     this.isConnected = true;
+    if (!globalThis.__THINKOVA_GLOBAL_MEMORY_STORE__) {
+      globalThis.__THINKOVA_GLOBAL_MEMORY_STORE__ = new Map();
+    }
+    this.store = globalThis.__THINKOVA_GLOBAL_MEMORY_STORE__;
   }
 
   public async connect(): Promise<boolean> {

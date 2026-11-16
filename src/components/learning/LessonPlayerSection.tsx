@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import {
   Check,
@@ -10,9 +10,12 @@ import {
   Maximize2,
   CheckCircle2,
   MessageSquare,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LessonSubTab, NoteItem, BuildCheckItem, TutorQnAItem } from "./types";
+import { tutorAudio } from "@/lib/tutor-audio";
 
 export interface LessonPlayerSectionProps {
   onNavigateRoadmap: () => void;
@@ -70,6 +73,18 @@ export function LessonPlayerSection({
     { id: "c3", label: "Safety step checks every reply", passed: false },
   ]);
 
+  const [isMuted, setIsMuted] = useState(false);
+  const [volume, setVolume] = useState(0.8);
+  const [lastNarratedChapter, setLastNarratedChapter] = useState<number | null>(null);
+  const playerContainerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const CHAPTER_NARRATIONS: Record<number, string> = {
+    0: "Welcome to Lesson 3: Connect the steps. In this module, we will explore why sequence and order matter when chaining AI and robotics actions.",
+    1: "Now let's connect two steps together. When sensor data arrives, the controller checks obstacle proximity before moving forward.",
+    2: "Great job! Now let's test our system with a real question. Watch how the safety fallback handles unexpected edge cases.",
+  };
+
   // Dynamic video timeline advancement (Lesson moving animation)
   useEffect(() => {
     if (!isPlaying || isLessonCompleted) return;
@@ -86,6 +101,31 @@ export function LessonPlayerSection({
     }, 1000);
     return () => clearInterval(interval);
   }, [isPlaying, isLessonCompleted, playbackSpeed, setIsLessonCompleted]);
+
+  // Audio synchronization effect
+  useEffect(() => {
+    if (isPlaying && !isLessonCompleted) {
+      tutorAudio.startAmbient();
+      const chap = CHAPTERS.find(
+        (c) => currentTimeSeconds >= c.startSec && currentTimeSeconds < c.endSec
+      ) || CHAPTERS[0]!;
+      if (lastNarratedChapter !== chap.id) {
+        setLastNarratedChapter(chap.id);
+        tutorAudio.speak(CHAPTER_NARRATIONS[chap.id] || chap.title);
+      }
+    } else {
+      tutorAudio.stopAmbient();
+      tutorAudio.stopSpeech();
+    }
+  }, [isPlaying, isLessonCompleted, currentTimeSeconds, lastNarratedChapter]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      tutorAudio.stopAmbient();
+      tutorAudio.stopSpeech();
+    };
+  }, []);
 
   // Auto countdown to quiz upon completion (Image 5)
   useEffect(() => {
@@ -154,6 +194,160 @@ export function LessonPlayerSection({
       (c) => currentTimeSeconds >= c.startSec && currentTimeSeconds < c.endSec
     ) || CHAPTERS[CHAPTERS.length - 1]!;
 
+  // Canvas visual rendering animation loop
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let animId: number;
+    let t = 0;
+
+    const render = () => {
+      t += 0.05;
+      const w = canvas.width;
+      const h = canvas.height;
+
+      // Dark futuristic lab backdrop
+      ctx.fillStyle = "#0B0C0F";
+      ctx.fillRect(0, 0, w, h);
+
+      // Subtle cybernetic grid lines
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.04)";
+      ctx.lineWidth = 1;
+      const gridSize = 32;
+      for (let x = 0; x < w; x += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+      }
+      for (let y = 0; y < h; y += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+
+      // Title & Telemetry Header
+      ctx.fillStyle = "#FF6B2C";
+      ctx.font = "bold 13px system-ui, sans-serif";
+      ctx.fillText("THINKOVA LABS · AUTONOMOUS ROVER PIPELINE", 24, 32);
+
+      ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+      ctx.font = "11px monospace";
+      ctx.fillText(`FPS: 60 | CH: ${currentChapter.title.toUpperCase()} | TIME: ${formatTime(currentTimeSeconds)}`, 24, 48);
+
+      // Step nodes architecture
+      const nodes = [
+        { label: "1. Ultrasonic Lidar", sub: "Sensor Feed" },
+        { label: "2. Chained AI Step", sub: "Logic Decision" },
+        { label: "3. Dual Motors", sub: "Safety Action" },
+      ];
+
+      const startX = 60;
+      const nodeW = (w - 120 - 60) / 3;
+      const nodeH = 68;
+      const nodeY = h / 2 - 40;
+
+      // Draw connection lines
+      ctx.strokeStyle = isPlaying ? "#FF6B2C" : "rgba(255, 107, 44, 0.3)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(startX + nodeW, nodeY + nodeH / 2);
+      ctx.lineTo(startX + nodeW + 30, nodeY + nodeH / 2);
+      ctx.moveTo(startX + 2 * nodeW + 30, nodeY + nodeH / 2);
+      ctx.lineTo(startX + 2 * nodeW + 60, nodeY + nodeH / 2);
+      ctx.stroke();
+
+      // Moving data packets
+      if (isPlaying) {
+        const p1 = (t * 40) % (nodeW + 30);
+        ctx.fillStyle = "#FF8B4E";
+        ctx.beginPath();
+        ctx.arc(startX + nodeW + (p1 % 30), nodeY + nodeH / 2, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(startX + 2 * nodeW + 30 + (p1 % 30), nodeY + nodeH / 2, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Draw nodes
+      nodes.forEach((node, i) => {
+        const nx = startX + i * (nodeW + 30);
+        const isActive = currentChapter.id === i;
+
+        // Node card background
+        ctx.fillStyle = isActive ? "rgba(255, 107, 44, 0.15)" : "rgba(255, 255, 255, 0.05)";
+        ctx.strokeStyle = isActive ? "#FF6B2C" : "rgba(255, 255, 255, 0.12)";
+        ctx.lineWidth = isActive ? 2 : 1;
+        ctx.beginPath();
+        ctx.roundRect(nx, nodeY, nodeW, nodeH, 12);
+        ctx.fill();
+        ctx.stroke();
+
+        // Node text
+        ctx.fillStyle = isActive ? "#FFFFFF" : "rgba(255, 255, 255, 0.7)";
+        ctx.font = "bold 12px system-ui, sans-serif";
+        ctx.fillText(node.label, nx + 14, nodeY + 28);
+
+        ctx.fillStyle = isActive ? "#FF8B4E" : "rgba(255, 255, 255, 0.4)";
+        ctx.font = "10px system-ui, sans-serif";
+        ctx.fillText(node.sub, nx + 14, nodeY + 48);
+
+        if (isActive && isPlaying) {
+          // Pulsing glow ring
+          ctx.strokeStyle = `rgba(255, 107, 44, ${0.4 + 0.3 * Math.sin(t * 3)})`;
+          ctx.lineWidth = 2;
+          ctx.strokeRect(nx - 2, nodeY - 2, nodeW + 4, nodeH + 4);
+        }
+      });
+
+      // Bottom dynamic audio waveform visualizer
+      const bars = 24;
+      const barW = (w - 48) / bars;
+      for (let b = 0; b < bars; b++) {
+        const barH = isPlaying && !isMuted ? (Math.sin(t * 3 + b * 0.4) * 0.5 + 0.5) * 22 + 4 : 4;
+        ctx.fillStyle = isPlaying ? `rgba(255, 107, 44, ${0.3 + (barH / 26) * 0.7})` : "rgba(255, 255, 255, 0.1)";
+        ctx.fillRect(24 + b * barW, h - 36 - barH, barW - 2, barH);
+      }
+
+      // Tutor PIP camera preview in top right
+      const pipW = 120;
+      const pipH = 50;
+      const pipX = w - pipW - 20;
+      const pipY = 16;
+      ctx.fillStyle = "rgba(20, 22, 29, 0.85)";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(pipX, pipY, pipW, pipH, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      // Pulsing green audio status dot
+      ctx.fillStyle = isPlaying && !isMuted ? "#1F9D55" : "rgba(255, 255, 255, 0.3)";
+      ctx.beginPath();
+      ctx.arc(pipX + 12, pipY + 16, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#FFFFFF";
+      ctx.font = "bold 10px system-ui, sans-serif";
+      ctx.fillText("Ms. Ananya", pipX + 22, pipY + 19);
+
+      ctx.fillStyle = isPlaying ? "#FF8B4E" : "rgba(255, 255, 255, 0.4)";
+      ctx.font = "9px system-ui, sans-serif";
+      ctx.fillText(isPlaying ? (isMuted ? "Audio Muted" : "Speaking...") : "Paused", pipX + 12, pipY + 38);
+
+      animId = requestAnimationFrame(render);
+    };
+
+    animId = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(animId);
+  }, [isPlaying, isMuted, currentChapter, currentTimeSeconds]);
+
   return (
     <div className="space-y-6">
       {/* Breadcrumb Navigation */}
@@ -205,7 +399,10 @@ export function LessonPlayerSection({
         {/* Left 8 Cols: Video Player & Subtabs */}
         <div className="lg:col-span-8 space-y-5">
           {/* Video Player Card */}
-          <div className="relative overflow-hidden rounded-[24px] bg-[#0B0C0F] shadow-lg aspect-video flex flex-col justify-between p-6">
+          <div
+            ref={playerContainerRef}
+            className="relative overflow-hidden rounded-[24px] bg-[#0B0C0F] shadow-lg aspect-video flex flex-col justify-between p-6 select-none"
+          >
             {isLessonCompleted ? (
               /* Lesson Complete Overlay matching Image 5 */
               <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center bg-black/85 backdrop-blur-md">
@@ -269,24 +466,23 @@ export function LessonPlayerSection({
               </div>
             ) : (
               <>
+                {/* Active Dynamic Lesson Video & Visuals Canvas */}
+                <canvas
+                  ref={canvasRef}
+                  width={960}
+                  height={540}
+                  onClick={() => setIsPlaying(!isPlaying)}
+                  className="absolute inset-0 w-full h-full object-cover cursor-pointer"
+                  title="Click video to Play/Pause"
+                />
+
                 {/* Top Overlay Badge showing current dynamic chapter */}
-                <div className="inline-flex self-start rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white backdrop-blur-md">
+                <div className="relative z-10 inline-flex self-start rounded-full bg-black/70 border border-white/10 px-3 py-1 text-xs font-semibold text-white backdrop-blur-md">
                   {currentChapter.title}
                 </div>
 
-                {/* Center Animated Preview */}
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-25">
-                  <Image
-                    src="/images/tracks-ai.png"
-                    alt="Lesson Graphic"
-                    width={280}
-                    height={200}
-                    className="object-contain"
-                  />
-                </div>
-
                 {/* Bottom Controls Bar */}
-                <div className="relative z-10 space-y-2">
+                <div className="relative z-10 space-y-2 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-3 -mx-6 -mb-6 rounded-b-[24px]">
                   {/* Interactive Scrubbable Timeline Bar */}
                   <div
                     onClick={(e) => {
@@ -312,8 +508,8 @@ export function LessonPlayerSection({
                     />
                   </div>
 
-                  <div className="flex items-center justify-between text-xs text-white">
-                    <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-between text-xs text-white pt-1">
+                    <div className="flex items-center gap-2 sm:gap-3">
                       <button
                         type="button"
                         onClick={() => setIsPlaying(!isPlaying)}
@@ -345,6 +541,43 @@ export function LessonPlayerSection({
                       <span className="text-[11px] font-mono text-white/80">
                         {formatTime(currentTimeSeconds)} / 18:45
                       </span>
+
+                      {/* Volume & Audio Controls */}
+                      <div className="flex items-center gap-1.5 ml-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const muted = tutorAudio.toggleMute();
+                            setIsMuted(muted);
+                          }}
+                          className="p-1 hover:text-[#FF6B2C] transition cursor-pointer"
+                          title={isMuted ? "Unmute" : "Mute audio"}
+                        >
+                          {isMuted ? (
+                            <VolumeX className="size-4 text-red-400" />
+                          ) : (
+                            <Volume2 className="size-4 text-white" />
+                          )}
+                        </button>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={isMuted ? 0 : volume}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            setVolume(v);
+                            tutorAudio.setVolume(v);
+                            if (isMuted && v > 0) {
+                              setIsMuted(false);
+                              tutorAudio.toggleMute();
+                            }
+                          }}
+                          className="w-14 h-1 accent-[#FF6B2C] bg-white/20 rounded-full cursor-pointer hidden sm:block"
+                          title="Tutor volume"
+                        />
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-3 text-[11px] font-semibold text-white/80">
@@ -371,7 +604,22 @@ export function LessonPlayerSection({
                       >
                         Finish lesson →
                       </button>
-                      <Maximize2 className="size-3.5 hover:text-white cursor-pointer" />
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!playerContainerRef.current) return;
+                          if (document.fullscreenElement) {
+                            document.exitFullscreen();
+                          } else {
+                            playerContainerRef.current.requestFullscreen();
+                          }
+                        }}
+                        className="p-1 hover:text-white transition cursor-pointer"
+                        title="Toggle Fullscreen"
+                      >
+                        <Maximize2 className="size-3.5" />
+                      </button>
                     </div>
                   </div>
                 </div>

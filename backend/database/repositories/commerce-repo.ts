@@ -402,17 +402,14 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
     });
     await this.upsertEnrollment(enrollment);
 
-    // Initial Milestones for Course
+    // Initial Milestones for Course (starts at Level 1 with 0 completed milestones for new learners)
     const defaultMilestones = [
       {
         id: "m_1",
         weekNumber: 1,
         title: "Lab Orientation & Circuit / Prompt Setup",
         summary: "Introduction to hardware kit and bot development environment.",
-        completed: true,
-        completedAt: new Date(),
-        score: 95,
-        tutorNote: "Quick start! Completed lab safety orientation.",
+        completed: false,
       },
       {
         id: "m_2",
@@ -465,13 +462,13 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
       totalWeeks: 6,
       frequencyPerWeek: 1,
       frequencyLabel: "1 live in-school lab/week + 90 min guided sandbox",
-      completedMinutes: 90,
+      completedMinutes: 0,
       totalEstimatedMinutes: 540,
-      lengthLeftMinutes: 450,
-      completionPercentage: 17,
+      lengthLeftMinutes: 540,
+      completionPercentage: 0,
       persona: payload.trackId === "robotics" ? "BUILDER" : payload.trackId === "ai" ? "LOGICIAN" : "CREATOR",
       milestones: defaultMilestones,
-      streakDays: 1,
+      streakDays: 0,
       lastActiveAt: new Date(),
       nextSessionAt: new Date(Date.now() + 7 * 86400000),
       createdAt: new Date(),
