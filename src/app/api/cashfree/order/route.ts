@@ -19,6 +19,7 @@ interface CreateCashfreeOrderBody {
   orderType?: "FULL_PAYMENT" | "INSTALLMENT_1" | "INSTALLMENT_2";
   amountInRupees?: number;
   autoConfirm?: boolean;
+  returnUrl?: string;
 }
 
 /**
@@ -157,17 +158,10 @@ export async function POST(request: Request) {
         customerPhone: parentPhone,
       },
       orderNote: `ThinkOva Course Admission - ${schoolUid.toUpperCase()} (${studentName})`,
+      returnUrl: body.returnUrl,
     });
 
-    const origin = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-    const checkoutUrl =
-      cfOrder.paymentSessionId && cfOrder.environment === "SANDBOX"
-        ? `https://sandbox.cashfree.com/pg/orders/${cfOrder.orderId}`
-        : `${origin}/enrolled?orderRef=${cfOrder.orderId}&childName=${encodeURIComponent(
-            studentName
-          )}&parentEmail=${encodeURIComponent(parentEmail)}&school=${encodeURIComponent(
-            schoolUid
-          )}&plan=${paymentPlan === "INSTALLMENTS" ? "parts" : "full"}`;
+    const checkoutUrl = cfOrder.checkoutUrl || "";
 
     // 5. Persist Order in dynamic repository
     await dbManager.commerce.upsertOrder({
@@ -272,13 +266,34 @@ export async function GET(request: Request) {
   const dbOrder = await dbManager.commerce.getOrderById(orderId);
   const cfOrder = await cashfreeClient.getOrder(orderId);
 
+  // If Cashfree verifies that order is PAID but dynamic DB is not yet marked PAID:
+  const isPaid = cfOrder.orderStatus === "PAID" || dbOrder?.status === "PAID";
+  if (cfOrder.orderStatus === "PAID" && dbOrder && dbOrder.status !== "PAID") {
+    await dbManager.commerce.updateOrderStatus(orderId, "PAID");
+    if (dbOrder.enrollmentId) {
+      await dbManager.commerce.updateEnrollmentStatus(dbOrder.enrollmentId, "ENROLLED");
+    }
+    await dbManager.commerce.upsertPayment({
+      id: `pay_${Date.now()}_sync`,
+      orderId,
+      gateway: "CASHFREE",
+      gatewayOrderId: cfOrder.cfOrderId || orderId,
+      gatewayPaymentId: `cf_sync_${Date.now()}`,
+      paymentMethod: "UPI",
+      amountInPaise: Math.round(cfOrder.orderAmount * 100),
+      status: "SUCCESS",
+      paidAt: new Date(),
+    });
+  }
+
   return NextResponse.json({
     status: "ok",
     orderId,
-    dbStatus: dbOrder?.status || "NOT_FOUND",
+    dbStatus: isPaid ? "PAID" : dbOrder?.status || "NOT_FOUND",
     cashfreeStatus: cfOrder.orderStatus,
     amount: cfOrder.orderAmount,
     currency: cfOrder.orderCurrency,
     isSimulation: cfOrder.isSimulation,
+    isPaid,
   });
 }

@@ -99,8 +99,16 @@ export class CashfreeClient {
 
     const returnUrl =
       input.returnUrl ||
-      (isProd && !siteUrl.startsWith("https://") ? "https://thinkova.ai/enrolled?order_id={order_id}" : `${siteUrl}/enrolled?order_id={order_id}`);
-    const notifyUrl = input.notifyUrl || (siteUrl.startsWith("https://") ? `${siteUrl}/api/cashfree/webhook` : (isProd ? "https://thinkova.ai/api/cashfree/webhook" : undefined));
+      (isProd && !siteUrl.startsWith("https://")
+        ? "https://www.thinkova.ai/confirmation?order_id={order_id}"
+        : `${siteUrl}/confirmation?order_id={order_id}`);
+    const notifyUrl =
+      input.notifyUrl ||
+      (siteUrl.startsWith("https://")
+        ? `${siteUrl}/api/cashfree/webhook`
+        : isProd
+        ? "https://www.thinkova.ai/api/cashfree/webhook"
+        : undefined);
 
     if (!this.isConfigured()) {
       // Dynamic Simulation Mode (for testing before credentials arrive)
@@ -113,7 +121,7 @@ export class CashfreeClient {
         orderCurrency: input.orderCurrency || "INR",
         environment: "SIMULATION",
         isSimulation: true,
-        checkoutUrl: `${siteUrl}/enrol/checkout?orderId=${encodeURIComponent(input.orderId)}&simulated=true`,
+        checkoutUrl: `${siteUrl}/checkout?orderId=${encodeURIComponent(input.orderId)}&simulated=true`,
       };
 
       this.simulatedOrders.set(input.orderId, simulatedResult);
@@ -123,6 +131,25 @@ export class CashfreeClient {
       return simulatedResult;
     }
 
+    // Clean customer phone to valid 10-digit Indian domestic mobile number
+    const rawDigits = (input.customer.customerPhone || "").replace(/\D/g, "");
+    let cleanPhone = rawDigits;
+    if (cleanPhone.length === 12 && cleanPhone.startsWith("91")) {
+      cleanPhone = cleanPhone.slice(2);
+    } else if (cleanPhone.length === 11 && cleanPhone.startsWith("0")) {
+      cleanPhone = cleanPhone.slice(1);
+    }
+    if (cleanPhone.length > 10) {
+      cleanPhone = cleanPhone.slice(-10);
+    }
+    if (cleanPhone.length < 10) {
+      cleanPhone = cleanPhone.padStart(10, "9");
+    }
+
+    // Clean customer name and ID
+    const customerName = (input.customer.customerName || "ThinkOva Parent").trim() || "ThinkOva Parent";
+    const customerId = (input.customer.customerId || `cust_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 50);
+
     // Live Cashfree PG Orders API v2023-08-01
     const url = `${this.getBaseUrl()}/orders`;
     const payload = {
@@ -130,10 +157,10 @@ export class CashfreeClient {
       order_amount: input.orderAmount,
       order_currency: input.orderCurrency || "INR",
       customer_details: {
-        customer_id: input.customer.customerId,
-        customer_name: input.customer.customerName,
+        customer_id: customerId,
+        customer_name: customerName,
         customer_email: input.customer.customerEmail,
-        customer_phone: input.customer.customerPhone.replace(/^\+91/, "").replace(/\D/g, ""),
+        customer_phone: cleanPhone,
       },
       order_meta: {
         return_url: returnUrl,
@@ -163,6 +190,9 @@ export class CashfreeClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = (await res.json()) as any;
 
+    const directCheckoutUrl = isProd
+      ? `https://payments.cashfree.com/order/#${data.payment_session_id}`
+      : `https://payments-test.cashfree.com/order/#${data.payment_session_id}`;
 
     return {
       orderId: data.order_id,
@@ -173,6 +203,7 @@ export class CashfreeClient {
       orderCurrency: data.order_currency || "INR",
       environment: isProd ? "PRODUCTION" : "SANDBOX",
       isSimulation: false,
+      checkoutUrl: directCheckoutUrl,
     };
   }
 
