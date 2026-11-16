@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as createOrderHandler } from "../src/app/api/cashfree/order/route";
 import { POST as webhookHandler } from "../src/app/api/cashfree/webhook/route";
 import { dbManager } from "../backend/database/client";
@@ -6,16 +6,54 @@ import { defaultDispatcher } from "../backend/notifications/dispatcher";
 import { CronEngine } from "../backend/cron/engine";
 import { abandonedCartJob } from "../backend/jobs";
 import { seedDynamicTestData } from "./fixtures";
+import crypto from "crypto";
 
-describe("End-to-End Virtual Payment & Automated Email Pipeline", () => {
+describe("Cashfree Live Payment & Automated Email Pipeline", () => {
+  const originalEnv = { ...process.env };
+  const testSecret = "cf_sec_key_abcdef123456";
+
   beforeEach(async () => {
+    process.env = { ...originalEnv };
+    process.env.CASHFREE_APP_ID = "CF_APP_TEST_123456";
+    process.env.CASHFREE_SECRET_KEY = testSecret;
+    process.env.CASHFREE_ENV = "SANDBOX";
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mockFetch = vi.fn().mockImplementation(async (url: string, opts?: any) => {
+      if (url.includes("/orders")) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let body: any = {};
+        try {
+          if (opts?.body) body = JSON.parse(opts.body);
+        } catch {
+          // empty
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            order_id: body.order_id || "ord_test_cf",
+            cf_order_id: 1234567,
+            order_status: "ACTIVE",
+            order_amount: body.order_amount || 4499.0,
+            order_currency: "INR",
+            payment_session_id: "session_live_test_session",
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
     await seedDynamicTestData();
     defaultDispatcher.clearOutbox();
-    delete process.env.CASHFREE_APP_ID;
-    delete process.env.CASHFREE_SECRET_KEY;
   });
 
-  it("1. Creates a virtual payment order and stores user, student, and order in dynamic database", async () => {
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.restoreAllMocks();
+  });
+
+  it("1. Creates a real Cashfree gateway order and stores user, student, and order in dynamic database", async () => {
     const orderPayload = {
       studentName: "Aarav Sharma",
       parentName: "Priya Sharma",
@@ -40,8 +78,7 @@ describe("End-to-End Virtual Payment & Automated Email Pipeline", () => {
     expect(data.status).toBe("success");
     expect(data.orderId).toBeDefined();
     expect(data.amount).toBe(4499);
-    expect(data.isSimulation).toBe(true);
-    expect(data.paymentSessionId).toContain("session_sim_");
+    expect(data.paymentSessionId).toBe("session_live_test_session");
 
     // Check DB state before payment
     const order = await dbManager.commerce.getOrderById(data.orderId);
@@ -58,8 +95,8 @@ describe("End-to-End Virtual Payment & Automated Email Pipeline", () => {
     expect(user?.phone).toBe("9820143210");
   });
 
-  it("2. Completes virtual payment via webhook and automatically generates Enrolment Success email & WhatsApp", async () => {
-    // A. Create the virtual order
+  it("2. Completes real payment via Cashfree webhook and automatically generates Enrolment Success email & WhatsApp", async () => {
+    // A. Create the order
     const orderReq = new Request("http://localhost:3000/api/cashfree/order", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -80,7 +117,7 @@ describe("End-to-End Virtual Payment & Automated Email Pipeline", () => {
     const orderData = await orderRes.json();
     const orderId = orderData.orderId;
 
-    // B. Simulate Cashfree Webhook callback: PAYMENT_SUCCESS_WEBHOOK
+    // B. Real Cashfree Webhook callback: PAYMENT_SUCCESS_WEBHOOK with valid HMAC
     const webhookPayload = {
       type: "PAYMENT_SUCCESS_WEBHOOK",
       data: {
@@ -100,10 +137,21 @@ describe("End-to-End Virtual Payment & Automated Email Pipeline", () => {
       },
     };
 
+    const rawBody = JSON.stringify(webhookPayload);
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = crypto
+      .createHmac("sha256", testSecret)
+      .update(`${timestamp}${rawBody}`)
+      .digest("base64");
+
     const webhookReq = new Request("http://localhost:3000/api/cashfree/webhook", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(webhookPayload),
+      headers: {
+        "Content-Type": "application/json",
+        "x-webhook-timestamp": timestamp,
+        "x-webhook-signature": signature,
+      },
+      body: rawBody,
     });
 
     const webhookRes = await webhookHandler(webhookReq);
@@ -113,7 +161,7 @@ describe("End-to-End Virtual Payment & Automated Email Pipeline", () => {
     expect(webhookData.status).toBe("success");
     expect(webhookData.event).toBe("PAYMENT_CONFIRMED");
 
-    // C. Verify Database status after virtual payment
+    // C. Verify Database status after payment
     const updatedOrder = await dbManager.commerce.getOrderById(orderId);
     expect(updatedOrder?.status).toBe("PAID");
 
@@ -144,8 +192,8 @@ describe("End-to-End Virtual Payment & Automated Email Pipeline", () => {
     expect(whatsapps[0]!.fallbackText).toContain("Delhi Public School, Pune");
   });
 
-  it("3. Handles virtual payment failure webhook and automatically generates Payment Failure email alert", async () => {
-    // A. Create the virtual order
+  it("3. Handles Cashfree payment failure webhook and automatically generates Payment Failure email alert", async () => {
+    // A. Create the order
     const orderReq = new Request("http://localhost:3000/api/cashfree/order", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -166,7 +214,7 @@ describe("End-to-End Virtual Payment & Automated Email Pipeline", () => {
     const orderData = await orderRes.json();
     const orderId = orderData.orderId;
 
-    // B. Simulate Cashfree Webhook callback: PAYMENT_FAILED_WEBHOOK
+    // B. Cashfree Webhook callback: PAYMENT_FAILED_WEBHOOK with valid HMAC
     const failPayload = {
       type: "PAYMENT_FAILED_WEBHOOK",
       data: {
@@ -182,10 +230,21 @@ describe("End-to-End Virtual Payment & Automated Email Pipeline", () => {
       },
     };
 
+    const rawBody = JSON.stringify(failPayload);
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = crypto
+      .createHmac("sha256", testSecret)
+      .update(`${timestamp}${rawBody}`)
+      .digest("base64");
+
     const webhookReq = new Request("http://localhost:3000/api/cashfree/webhook", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(failPayload),
+      headers: {
+        "Content-Type": "application/json",
+        "x-webhook-timestamp": timestamp,
+        "x-webhook-signature": signature,
+      },
+      body: rawBody,
     });
 
     const webhookRes = await webhookHandler(webhookReq);
@@ -213,7 +272,6 @@ describe("End-to-End Virtual Payment & Automated Email Pipeline", () => {
   });
 
   it("4. Automatically generates Abandoned Cart Recovery email when order is awaiting payment for > 1 hour", async () => {
-    // Create an order awaiting payment created 90 minutes ago
     const abandonedOrderId = "ord_abandoned_virtual_90m";
     const userId = "usr_parent_abandoned";
     const studentId = "stu_abandoned";
@@ -280,5 +338,29 @@ describe("End-to-End Virtual Payment & Automated Email Pipeline", () => {
     expect(email.html).toContain("Delhi Public School, Pune");
     expect(email.html).toContain(abandonedOrderId);
     expect(email.html).toContain("Resume & Complete Enrolment");
+  });
+
+  it("5. Rejects order creation with 503 error when Cashfree credentials are missing on server", async () => {
+    delete process.env.CASHFREE_APP_ID;
+    delete process.env.CASHFREE_SECRET_KEY;
+
+    const req = new Request("http://localhost:3000/api/cashfree/order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        studentName: "Unconfigured Test",
+        parentName: "Test Parent",
+        parentEmail: "test@example.com",
+        parentPhone: "9820143210",
+        schoolUid: "10245",
+      }),
+    });
+
+    const res = await createOrderHandler(req);
+    expect(res.status).toBe(503);
+
+    const data = await res.json();
+    expect(data.status).toBe("error");
+    expect(data.message).toContain("Cashfree payment gateway is not configured");
   });
 });

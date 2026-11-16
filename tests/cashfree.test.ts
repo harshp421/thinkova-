@@ -21,43 +21,36 @@ describe("Cashfree Payment Gateway Integration", () => {
     vi.restoreAllMocks();
   });
 
-  it("1. Starts in Dynamic Simulation mode when credentials are not yet defined", () => {
+  it("1. Rejects order creation when credentials are not yet defined", async () => {
     const client = new CashfreeClient();
     expect(client.isConfigured()).toBe(false);
 
     const summary = client.getConfigSummary();
     expect(summary.configured).toBe(false);
-    expect(summary.mode).toBe("SIMULATION");
-    expect(summary.instructions).toContain("dynamic simulation mode");
+    expect(summary.mode).toBe("UNCONFIGURED");
+
+    await expect(
+      client.createOrder({
+        orderId: "ord_cf_test_1",
+        orderAmount: 4999,
+        customer: {
+          customerId: "usr_parent_01",
+          customerName: "Sandeep Verma",
+          customerEmail: "sandeep@example.com",
+          customerPhone: "9876543210",
+        },
+      })
+    ).rejects.toThrow("credentials are not configured");
   });
 
-  it("2. Creates a simulated Cashfree order with valid paymentSessionId", async () => {
+  it("2. Rejects order lookup when credentials are not configured", async () => {
     const client = new CashfreeClient();
-    const order = await client.createOrder({
-      orderId: "ord_cf_test_1",
-      orderAmount: 4999,
-      customer: {
-        customerId: "usr_parent_01",
-        customerName: "Sandeep Verma",
-        customerEmail: "sandeep@example.com",
-        customerPhone: "+919876543210",
-      },
-    });
-
-    expect(order.orderId).toBe("ord_cf_test_1");
-    expect(order.orderAmount).toBe(4999);
-    expect(order.orderStatus).toBe("ACTIVE");
-    expect(order.isSimulation).toBe(true);
-    expect(order.paymentSessionId).toContain("session_sim_");
-    expect(order.cfOrderId).toContain("cf_sim_");
-
-    // Order status lookup
-    const status = await client.getOrder("ord_cf_test_1");
-    expect(status.orderStatus).toBe("ACTIVE");
-    expect(status.orderAmount).toBe(4999);
+    await expect(client.getOrder("ord_cf_test_1")).rejects.toThrow(
+      "credentials are not configured"
+    );
   });
 
-  it("3. Automatically switches to Live Cashfree API when credentials are provided", async () => {
+  it("3. Creates live Cashfree order when credentials are provided", async () => {
     process.env.CASHFREE_APP_ID = "CF_APP_TEST_123456";
     process.env.CASHFREE_SECRET_KEY = "cf_sec_key_abcdef123456";
     process.env.CASHFREE_ENV = "SANDBOX";
@@ -94,10 +87,11 @@ describe("Cashfree Payment Gateway Integration", () => {
       },
     });
 
-    expect(order.isSimulation).toBe(false);
     expect(order.orderId).toBe("ord_live_99");
     expect(order.cfOrderId).toBe("887766");
     expect(order.paymentSessionId).toBe("session_live_real_xyz");
+    expect(order.checkoutUrl).toBe("https://payments-test.cashfree.com/order/#session_live_real_xyz");
+
     expect(mockFetch).toHaveBeenCalledWith(
       "https://sandbox.cashfree.com/pg/orders",
       expect.objectContaining({
@@ -145,7 +139,7 @@ describe("Cashfree Payment Gateway Integration", () => {
       createdAt: new Date(),
     });
 
-    // 2. Simulate payment success update
+    // 2. Process verified payment success update
     await dbManager.commerce.updateOrderStatus(orderId, "PAID");
     await dbManager.commerce.updateEnrollmentStatus("enr_01", "ENROLLED");
     await dbManager.commerce.upsertPayment({
@@ -168,4 +162,3 @@ describe("Cashfree Payment Gateway Integration", () => {
     expect(enrollment?.status).toBe("ENROLLED");
   });
 });
-

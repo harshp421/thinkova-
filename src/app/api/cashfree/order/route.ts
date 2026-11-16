@@ -52,6 +52,16 @@ export async function POST(request: Request) {
     );
   }
 
+  if (!cashfreeClient.isConfigured()) {
+    return NextResponse.json(
+      {
+        status: "error",
+        message: "Cashfree payment gateway is not configured on the server. Please contact ThinkOva support.",
+      },
+      { status: 503 }
+    );
+  }
+
   // Determine amount in rupees (FULL: ₹4,999, INSTALLMENT: ₹2,499)
   const defaultAmount = orderType === "FULL_PAYMENT" ? 4999 : 2499;
   const amount = body.amountInRupees || defaultAmount;
@@ -176,62 +186,6 @@ export async function POST(request: Request) {
       createdAt: new Date(),
     });
 
-    // When autoConfirm is requested (e.g. from the website enrolment form in demo mode),
-    // auto-complete virtual payment and immediately dispatch confirmation email (SMTP) & WhatsApp (OpenWA)!
-    if (body.autoConfirm === true) {
-      await dbManager.commerce.updateOrderStatus(cfOrder.orderId, "PAID");
-      await dbManager.commerce.updateEnrollmentStatus(enrollmentId, "ENROLLED");
-
-      await dbManager.commerce.upsertPayment({
-        id: `pay_${Date.now()}_sim`,
-        orderId: cfOrder.orderId,
-        gateway: "CASHFREE",
-        gatewayOrderId: cfOrder.orderId,
-        gatewayPaymentId: `cf_pay_sim_${Date.now()}`,
-        paymentMethod: "UPI",
-        amountInPaise,
-        status: "SUCCESS",
-        paidAt: new Date(),
-      });
-
-      const email = emailTemplates.enrolmentSuccess({
-        parentName: user?.username || parentName || "Parent",
-        studentName: student.fullName,
-        currentGrade: student.currentGrade,
-        schoolName: student.schoolUid,
-        batchSchedule: "Weekly Computer Lab Sessions",
-        tutorName: "Lead AI Mentor",
-        amountPaid: `₹${amount.toLocaleString("en-IN")}`,
-        orderId: cfOrder.orderId,
-      });
-
-      await defaultDispatcher.sendEmail({
-        to: parentEmail,
-        subject: email.subject,
-        html: email.html,
-        text: email.text,
-        metadata: { orderId: cfOrder.orderId, type: "ENROLMENT_RECEIPT" },
-      });
-
-      const wa = whatsappTemplates.enrolmentConfirmed({
-        parentPhone,
-        parentName: user?.username || parentName || "Parent",
-        studentName: student.fullName,
-        schoolName: student.schoolUid,
-        grade: student.currentGrade,
-        orderId: cfOrder.orderId,
-        amountPaid: `₹${amount.toLocaleString("en-IN")}`,
-        startDate: "the upcoming Saturday batch",
-      });
-
-      await defaultDispatcher.sendWhatsApp({
-        to: parentPhone,
-        templateName: "thinkova_enrolment_confirmed",
-        fallbackText: wa.fallbackText,
-        metadata: { orderId: cfOrder.orderId, type: "ENROLMENT_RECEIPT" },
-      });
-    }
-
     return NextResponse.json({
       status: "success",
       orderId: cfOrder.orderId,
@@ -241,7 +195,6 @@ export async function POST(request: Request) {
       amount: cfOrder.orderAmount,
       currency: cfOrder.orderCurrency,
       environment: cfOrder.environment,
-      isSimulation: cfOrder.isSimulation,
       checkoutUrl,
       enrollmentId,
     });
@@ -293,7 +246,6 @@ export async function GET(request: Request) {
     cashfreeStatus: cfOrder.orderStatus,
     amount: cfOrder.orderAmount,
     currency: cfOrder.orderCurrency,
-    isSimulation: cfOrder.isSimulation,
     isPaid,
   });
 }

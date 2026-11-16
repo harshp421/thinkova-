@@ -100,13 +100,6 @@ export default function CheckoutPage() {
   const [selectedBank, setSelectedBank] = useState("HDFC Bank");
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [simulationOrder, setSimulationOrder] = useState<{
-    orderId: string;
-    amount: number;
-    courseId: string;
-    studentId: string;
-  } | null>(null);
-  const [isSimulating, setIsSimulating] = useState(false);
 
   const fullPrice = course.price || 3999;
   const payTodayAmount = paymentPlan === "full" ? fullPrice : 3000;
@@ -155,19 +148,7 @@ export default function CheckoutPage() {
         );
       }
 
-      // 2. If Cashfree credentials are not configured on server (simulation mode)
-      if (cfData.isSimulation) {
-        setIsProcessing(false);
-        setSimulationOrder({
-          orderId: cfData.orderId,
-          amount: payTodayAmount,
-          courseId: course.id,
-          studentId: effectiveStudentId,
-        });
-        return;
-      }
-
-      // 3. Live Cashfree SDK Checkout v3
+      // 2. Live Cashfree SDK Checkout v3
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const loadCashfreeSdk = (): Promise<any> => {
         return new Promise((resolve, reject) => {
@@ -213,38 +194,6 @@ export default function CheckoutPage() {
       const msg = err instanceof Error ? err.message : "Payment processing error";
       setErrorMessage(msg);
       setIsProcessing(false);
-    }
-  };
-
-  const handleSimulatePayment = async () => {
-    if (!simulationOrder) return;
-    setIsSimulating(true);
-    try {
-      const res = await fetch("/api/cashfree/simulate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId: simulationOrder.orderId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || "Simulation failed");
-      }
-      try {
-        const storedEnrolled = JSON.parse(localStorage.getItem("thinkova_enrolled_courses") || "[]");
-        if (!storedEnrolled.includes(simulationOrder.courseId)) {
-          storedEnrolled.push(simulationOrder.courseId);
-          localStorage.setItem("thinkova_enrolled_courses", JSON.stringify(storedEnrolled));
-        }
-      } catch {
-        // Safe fallback in SSR
-      }
-      router.push(
-        `/confirmation?order_id=${simulationOrder.orderId}&courseId=${simulationOrder.courseId}&studentId=${simulationOrder.studentId}&plan=${paymentPlan}&paid=${simulationOrder.amount}`
-      );
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Simulation failed";
-      setErrorMessage(msg);
-      setIsSimulating(false);
     }
   };
 
@@ -715,48 +664,6 @@ export default function CheckoutPage() {
           </div>
         </div>
       </main>
-
-      {/* Simulation Modal (Rendered only when CASHFREE_APP_ID / SECRET are not yet configured in Azure) */}
-      {simulationOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md rounded-3xl bg-white p-6 sm:p-7 shadow-2xl border border-[#EAE6DE]">
-            <div className="flex items-center gap-3 text-amber-600">
-              <ShieldCheck className="size-6 text-amber-500" />
-              <h3 className="font-bold text-lg text-[#0B0C0F]">Cashfree Simulation Mode</h3>
-            </div>
-            <p className="mt-3 text-xs sm:text-sm text-[#5A5F6B] leading-relaxed">
-              Live Cashfree credentials (<code className="bg-neutral-100 px-1 py-0.5 rounded text-[#0B0C0F]">CASHFREE_APP_ID</code> and <code className="bg-neutral-100 px-1 py-0.5 rounded text-[#0B0C0F]">CASHFREE_SECRET_KEY</code>) are not yet configured in Azure Portal App Service Settings.
-            </p>
-            <p className="mt-2 text-xs text-[#5A5F6B]">
-              Because credentials are not configured on the server, real UPI and card payments cannot be opened. You can test the end-to-end enrollment flow using test simulation below.
-            </p>
-            <div className="mt-6 flex flex-col gap-2.5">
-              <button
-                type="button"
-                disabled={isSimulating}
-                onClick={handleSimulatePayment}
-                className="w-full flex items-center justify-center gap-2 rounded-2xl bg-amber-500 py-3.5 text-xs sm:text-sm font-semibold text-white shadow-md hover:bg-amber-600 active:scale-[0.99] transition disabled:opacity-60 cursor-pointer"
-              >
-                {isSimulating ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Simulating payment...
-                  </>
-                ) : (
-                  <span>Simulate Test Payment (Dev Only)</span>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => setSimulationOrder(null)}
-                className="w-full rounded-2xl border border-[#DCD8CF] py-2.5 text-xs font-semibold text-[#5A5F6B] hover:bg-[#F2EFE9] active:scale-[0.99] transition cursor-pointer"
-              >
-                Cancel & Return
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
