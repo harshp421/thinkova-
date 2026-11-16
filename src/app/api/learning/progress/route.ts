@@ -11,21 +11,32 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Missing required studentId parameter." }, { status: 400 });
     }
 
-    const [student, progress, analysis] = await Promise.all([
+    const [student, progress, analysis, enrollments] = await Promise.all([
       dbManager.commerce.getStudentById(studentId),
       dbManager.commerce.getCourseProgressByStudent(studentId, courseId),
       dbManager.commerce.getLearningAnalysis(studentId),
+      dbManager.commerce.getEnrollmentsByStudentId(studentId),
     ]);
 
-    const studentName = student?.fullName || "Aarav Sharma";
-    const detailedProgress = getStudentProgressData(studentId, courseId, studentName);
+    const activeEnrollments = (enrollments || []).filter(
+      (e) => e.status === "ENROLLED" || e.status === "PENDING_PAYMENT"
+    );
+    const isEnrolled = activeEnrollments.some((e) => e.status === "ENROLLED");
+
+    const studentName = student?.fullName || (studentId === "aarav" ? "Aarav Sharma" : "Learner");
+    const completedLevels = progress
+      ? progress.milestones.filter((m) => m.completed).length
+      : (studentId === "aarav" ? 5 : 0);
+    const detailedProgress = getStudentProgressData(studentId, courseId, studentName, completedLevels);
 
     return NextResponse.json({
       success: true,
       student: student || { id: studentId, fullName: studentName },
-      progress: progress || null,
+      isEnrolled,
+      activeEnrollments,
+      progress: isEnrolled ? progress : null,
       analysis: analysis || null,
-      detailedProgress,
+      detailedProgress: isEnrolled ? detailedProgress : null,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal server error";

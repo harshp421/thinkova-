@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -19,37 +19,84 @@ import { StudentAvatar } from "@/components/ui/StudentAvatar";
 import { useAuth } from "@/lib/auth-context";
 import { getCourseById } from "@/data/tracks";
 import { cn } from "@/lib/utils";
+import { LoadingSessionOverlay } from "@/components/ui/LoadingSessionOverlay";
 
 export default function CheckoutPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { activeStudent, user } = useAuth();
+  const { user, activeStudent, students, isLoading: authLoading } = useAuth();
 
   // Selected course from URL or default to game design matching Image 3
   const courseId = searchParams.get("courseId") || "game-design-starter";
   const course = getCourseById(courseId);
 
-  const studentName = activeStudent?.fullName || "Aarav Sharma";
-  const studentFirstName = studentName.split(" ")[0];
-  const studentGrade = activeStudent?.currentGrade || 6;
+  const studentIdParam = searchParams.get("studentId");
+
+  // Task 6: Mandatory signup/login check before checkout / enrolment
+  useEffect(() => {
+    if (!authLoading) {
+      if (!user) {
+        router.replace(`/signup?redirectTo=${encodeURIComponent(`/checkout?courseId=${courseId}`)}`);
+      }
+    }
+  }, [authLoading, user, courseId, router]);
+
+  const targetStudent = useMemo(() => {
+    if (studentIdParam) {
+      const match = students.find((s) => s.id === studentIdParam);
+      if (match) return match;
+    }
+    if (activeStudent) return activeStudent;
+    if (students.length > 0 && students[0]) return students[0];
+    if (user) {
+      return {
+        id: `std_${user.id}`,
+        fullName: user.fullName || "Learner",
+        currentGrade: 6,
+        schoolName: "ThinkOva Partner School",
+        schoolUid: "SCH_GENERAL",
+        isEnrolled: false,
+        activeEnrollment: null,
+      };
+    }
+    return null;
+  }, [studentIdParam, activeStudent, students, user]);
+
+  const studentName = targetStudent?.fullName || user?.fullName || "Learner";
+  const studentFirstName = studentName.split(" ")[0] || "Learner";
+  const studentGrade = targetStudent?.currentGrade || 6;
 
   // Plan state
   const [paymentPlan, setPaymentPlan] = useState<"full" | "installments">("full");
 
-  // Parent form state (pre-filled like Image 3)
-  const [parentName, setParentName] = useState(user?.fullName || "Priya Sharma");
-  const [parentEmail, setParentEmail] = useState(user?.email || "priya.sharma@gmail.com");
-  const [parentPhone, setParentPhone] = useState("+91 98765 43210");
+  // Parent form state (pre-filled with real authenticated parent details)
+  const [parentName, setParentName] = useState(user?.fullName || "");
+  const [parentEmail, setParentEmail] = useState(user?.email || "");
+  const [parentPhone, setParentPhone] = useState(user?.phone || "");
   const [schoolName, setSchoolName] = useState(
-    activeStudent?.schoolName || "The Bishop's School"
+    targetStudent?.schoolName || "ThinkOva Partner School"
   );
+
+  useEffect(() => {
+    if (user) {
+      if (user.fullName) setParentName(user.fullName);
+      if (user.email) setParentEmail(user.email);
+      if (user.phone) setParentPhone(user.phone);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (targetStudent?.schoolName) {
+      setSchoolName(targetStudent.schoolName);
+    }
+  }, [targetStudent]);
 
   // Payment method state (matching Image 4)
   const [paymentMethod, setPaymentMethod] = useState<"upi" | "card" | "netbanking">("upi");
-  const [upiId, setUpiId] = useState("priya@okhdfcbank");
-  const [cardNumber, setCardNumber] = useState("4532 •••• •••• 8821");
-  const [cardExpiry, setCardExpiry] = useState("08/29");
-  const [cardCvv, setCardCvv] = useState("•••");
+  const [upiId, setUpiId] = useState("");
+  const [cardNumber, setCardNumber] = useState("");
+  const [cardExpiry, setCardExpiry] = useState("");
+  const [cardCvv, setCardCvv] = useState("");
   const [selectedBank, setSelectedBank] = useState("HDFC Bank");
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -59,6 +106,11 @@ export default function CheckoutPage() {
   const secondPartAmount = fullPrice - 3000 + 500; // ₹500 more in total
 
   const handlePayAndEnrol = async () => {
+    if (!user) {
+      router.push(`/signup?redirectTo=${encodeURIComponent(`/checkout?courseId=${course.id}`)}`);
+      return;
+    }
+
     setIsProcessing(true);
     setErrorMessage("");
 
@@ -69,10 +121,10 @@ export default function CheckoutPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           studentName,
-          parentName,
-          parentEmail,
-          parentPhone,
-          schoolUid: "THE_BISHOPS_SCHOOL",
+          parentName: parentName || user.fullName,
+          parentEmail: parentEmail || user.email,
+          parentPhone: parentPhone || user.phone,
+          schoolUid: schoolName || "PUNE_CAMPUS",
           grade: studentGrade,
           paymentPlan: paymentPlan === "full" ? "FULL" : "INSTALLMENTS",
           amountInRupees: payTodayAmount,
@@ -81,20 +133,70 @@ export default function CheckoutPage() {
         }),
       });
 
-      // 2. Trigger Enrolment & Learning Initialization Pipeline
+      const cfData = await cashfreeRes.json().catch(() => ({}));
+
+      // If Cashfree SDK is available and active on client
+      if (cfData.paymentSessionId && !cfData.isSimulation && typeof window !== "undefined") {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const loadCashfreeSdk = (): Promise<any> => {
+            return new Promise((resolve, reject) => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              if ((window as any).Cashfree) {
+                const mode = (cfData.environment || "SANDBOX").toLowerCase();
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                resolve((window as any).Cashfree({ mode }));
+                return;
+              }
+              const script = document.createElement("script");
+              script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
+              script.async = true;
+              script.onload = () => {
+                const mode = (cfData.environment || "SANDBOX").toLowerCase();
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                resolve((window as any).Cashfree({ mode }));
+              };
+              script.onerror = () => reject(new Error("Cashfree SDK failed to load."));
+              document.body.appendChild(script);
+            });
+          };
+
+          const cashfree = await loadCashfreeSdk();
+          await cashfree.checkout({
+            paymentSessionId: cfData.paymentSessionId,
+            redirectTarget: "_self",
+          });
+          return;
+        } catch (sdkErr) {
+          console.warn("[Cashfree Checkout SDK non-fatal, redirecting to gateway]", sdkErr);
+          if (cfData.checkoutUrl) {
+            window.location.href = cfData.checkoutUrl;
+            return;
+          }
+        }
+      }
+
+      const effectiveStudentId = targetStudent?.id || (user ? `std_${user.id}` : "student");
+
+      // 2. Complete Enrolment & Trigger OpenWA + Microsoft Email Dispatch
       const enrolRes = await fetch("/api/courses/enrol", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          studentId: activeStudent?.id || "aarav",
+          studentId: effectiveStudentId,
           courseId: course.id,
           courseTitle: course.title,
           trackId: course.trackId,
-          parentUserId: user?.id || "usr_priya_sharma",
+          parentUserId: user.id,
           paymentPlan: paymentPlan === "full" ? "FULL" : "INSTALLMENTS",
           amountInRupees: payTodayAmount,
         }),
       });
+
+      const enrolData = await enrolRes.json();
+      if (!enrolRes.ok) {
+        throw new Error(enrolData.error || "Enrolment failed. Please try again.");
+      }
 
       // 3. Store freshly enrolled course into session for instant Home & My Learning sync
       try {
@@ -107,30 +209,39 @@ export default function CheckoutPage() {
         // Safe fallback in SSR
       }
 
-      // Smooth redirection to Confirmation page
+      // 4. Smooth redirection to Confirmation page
       setTimeout(() => {
         router.push(
-          `/confirmation?courseId=${course.id}&studentId=${
-            activeStudent?.id || "aarav"
-          }&plan=${paymentPlan}&paid=${payTodayAmount}`
+          `/confirmation?courseId=${course.id}&studentId=${effectiveStudentId}&plan=${paymentPlan}&paid=${payTodayAmount}`
         );
       }, 600);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Payment processing error";
       setErrorMessage(msg);
-      // Fallback navigation for smooth demo experience
-      setTimeout(() => {
-        router.push(
-          `/confirmation?courseId=${course.id}&studentId=${
-            activeStudent?.id || "aarav"
-          }&plan=${paymentPlan}&paid=${payTodayAmount}`
-        );
-      }, 700);
+      setIsProcessing(false);
     }
   };
 
+  if (authLoading && !user) {
+    return (
+      <div className="relative flex min-h-screen w-full items-center justify-center bg-[#F4F3EE]">
+        <LoadingSessionOverlay
+          isOpen={true}
+          message="Loading checkout session..."
+          subMessage="Retrieving enrolment details and tuition summary."
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className="flex min-h-screen w-full bg-[#F4F3EE] text-[#0B0C0F] selection:bg-[#FF6026] selection:text-white">
+    <div className="relative flex min-h-screen w-full bg-[#F4F3EE] text-[#0B0C0F] selection:bg-[#FF6026] selection:text-white">
+      <LoadingSessionOverlay
+        isOpen={isProcessing}
+        message="Connecting to Payment Gateway..."
+        subMessage="Preparing secure payment session with Cashfree. Please do not refresh."
+      />
+
       {/* Shared Dark Sidebar */}
       <AppSidebar activeItem="explore" />
 
@@ -394,7 +505,7 @@ export default function CheckoutPage() {
                   </button>
                 </div>
 
-                {/* Tab 1: UPI matching Image 4 */}
+                {/* Tab 1: UPI */}
                 {paymentMethod === "upi" && (
                   <div className="mt-5 space-y-3">
                     <div className="relative flex items-center">
@@ -402,16 +513,18 @@ export default function CheckoutPage() {
                         type="text"
                         value={upiId}
                         onChange={(e) => setUpiId(e.target.value)}
-                        placeholder="yourname@bank"
+                        placeholder="e.g. mobile@upi or username@okhdfcbank"
                         className="w-full rounded-2xl border border-[#E3E0D9] bg-[#FBFBFA] px-4 py-3.5 pr-28 text-sm font-medium text-[#0B0C0F] outline-none focus:border-[#FF6026] focus:bg-white transition"
                       />
-                      <div className="absolute right-3 inline-flex items-center gap-1 rounded-full bg-[#E3F5E8] px-3 py-1 text-xs font-semibold text-[#1F9D55]">
-                        <Check className="size-3.5 stroke-[2.5]" />
-                        Verified
-                      </div>
+                      {upiId.includes("@") && upiId.length >= 5 && (
+                        <div className="absolute right-3 inline-flex items-center gap-1 rounded-full bg-[#E3F5E8] px-3 py-1 text-xs font-semibold text-[#1F9D55]">
+                          <Check className="size-3.5 stroke-[2.5]" />
+                          Valid
+                        </div>
+                      )}
                     </div>
                     <p className="text-xs text-[#5A5F6B]">
-                      You&apos;ll approve the payment in your UPI app. Encrypted connection.
+                      Enter your UPI ID or choose Google Pay / PhonePe / QR on the next step. Real-time bank settlement via Cashfree.
                     </p>
                   </div>
                 )}

@@ -6,26 +6,30 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Logo } from "@/components/ui/Logo";
+import { LoadingSessionOverlay } from "@/components/ui/LoadingSessionOverlay";
 import { useAuth } from "@/lib/auth-context";
 
 export default function LoginPage() {
   const router = useRouter();
   const { login, loginWithGoogle } = useAuth();
 
-  const [email, setEmail] = useState("priya.sharma@gmail.com");
-  const [password, setPassword] = useState("••••••••");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showSignupPrompt, setShowSignupPrompt] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim()) {
       setErrorMessage("Please enter your registered email.");
+      setShowSignupPrompt(false);
       return;
     }
 
     setErrorMessage(null);
+    setShowSignupPrompt(false);
     setIsLoading(true);
 
     const result = await login(email.trim());
@@ -34,7 +38,11 @@ export default function LoginPage() {
     if (result.success) {
       router.push(result.redirectTo || "/who-is-learning");
     } else {
-      setErrorMessage(result.error || "Login failed. Please check your credentials.");
+      const err = result.error || "Login failed. Please check your credentials.";
+      setErrorMessage(err);
+      if (err.toLowerCase().includes("not found") || err.toLowerCase().includes("sign up")) {
+        setShowSignupPrompt(true);
+      }
     }
   };
 
@@ -42,10 +50,7 @@ export default function LoginPage() {
     setErrorMessage(null);
     setIsLoading(true);
 
-    const result = await loginWithGoogle({
-      email: "priya.sharma@gmail.com",
-      name: "Priya Sharma",
-    });
+    const result = await loginWithGoogle();
     setIsLoading(false);
 
     if (result.success) {
@@ -56,7 +61,13 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen w-full flex-col lg:flex-row bg-[#F8F7F4] text-[#0B0C0F]">
+    <div className="relative flex min-h-screen w-full flex-col lg:flex-row bg-[#F8F7F4] text-[#0B0C0F]">
+      <LoadingSessionOverlay
+        isOpen={isLoading}
+        message="Logging into Thinkova..."
+        subMessage="Checking your account and loading your learning session."
+      />
+
       {/* Left Column: Dark Photo Showcase matching Figma Image 1 */}
       <div className="relative flex w-full flex-col justify-between overflow-hidden bg-[#0B0C0F] p-8 sm:p-12 lg:w-1/2 lg:min-h-screen lg:p-16">
         <Image
@@ -119,8 +130,23 @@ export default function LoginPage() {
           </p>
 
           {errorMessage && (
-            <div className="mt-5 rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs font-medium text-red-700">
-              {errorMessage}
+            <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-xs sm:text-sm text-red-800 shadow-sm">
+              <div className="font-bold text-red-900 mb-0.5">
+                {showSignupPrompt ? "Account not found" : "Login error"}
+              </div>
+              <p className="leading-relaxed text-red-700">
+                {errorMessage}
+              </p>
+              {showSignupPrompt && (
+                <div className="mt-3 pt-2.5 border-t border-red-200/60">
+                  <Link
+                    href={`/signup?email=${encodeURIComponent(email.trim())}`}
+                    className="inline-flex items-center gap-1 font-bold text-[#FF6026] hover:underline"
+                  >
+                    <span>Click here to sign up with {email.trim()} &rarr;</span>
+                  </Link>
+                </div>
+              )}
             </div>
           )}
 

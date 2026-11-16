@@ -33,6 +33,48 @@ export interface BuildTaskData {
 
 // Canonical task definitions matching Figma and course levels
 export const TASK_DEFINITIONS: Record<string, BuildTaskData> = {
+  "level-1-problem-map": {
+    taskId: "level-1-problem-map",
+    courseId: "ai-study-helper",
+    levelNumber: 1,
+    title: "Problem map and safety pledge",
+    dueText: "Due Fri · 9:00 PM",
+    estimatedTime: "About 25 min",
+    levelBadge: "Level 1 Starter",
+    brief:
+      "Map out the exact problem your AI agent will solve for students and define 3 strict safety boundaries so it never collects personal information.",
+    whatGoodLooksLike: [
+      "A clear 1-paragraph summary of who the agent helps and what it does",
+      "Three specific questions the agent should politely refuse to answer",
+      "A signed safety and privacy pledge",
+    ],
+    defaultFile: {
+      id: "f-map-1",
+      name: "problem-map-and-safety-pledge.pdf",
+      size: "1.2 MB",
+      type: "application/pdf",
+      uploadedAt: new Date().toISOString(),
+    },
+    defaultNote: "Created problem framing for student revision helper with privacy boundaries.",
+    lastFeedback: {
+      tutorName: "Ms Ananya Rao",
+      tutorMeta: "Orientation mentor",
+      avatarInitials: "AR",
+      quote: '"Great job starting with safety first! Make sure your prompt prevents the agent from making up facts."',
+    },
+    stuckLinks: [
+      {
+        title: "Ask in Thursday's class",
+        subtitle: "Live · 6:00 PM",
+        type: "live",
+      },
+      {
+        title: "Safety rules cheat sheet",
+        subtitle: "PDF · 1 page",
+        type: "pdf",
+      },
+    ],
+  },
   "level-6-memory": {
     taskId: "level-6-memory",
     courseId: "ai-study-helper",

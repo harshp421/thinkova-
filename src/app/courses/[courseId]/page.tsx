@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -18,16 +18,24 @@ import { AppSidebar } from "@/components/layout/AppSidebar";
 import { useAuth } from "@/lib/auth-context";
 import { getCourseById } from "@/data/tracks";
 import { cn } from "@/lib/utils";
+import { LoadingSessionOverlay } from "@/components/ui/LoadingSessionOverlay";
 
 export default function CourseDetailsPage() {
   const params = useParams();
   const router = useRouter();
-  const { activeStudent } = useAuth();
+  const { user, students, activeStudent, setActiveStudent, isLoading: authLoading } = useAuth();
 
   const courseId = (params?.courseId as string) || "robotics-starter";
   const course = getCourseById(courseId);
 
-  const studentName = activeStudent?.fullName || "Aarav Sharma";
+  // Task 2: Mandatory login or signup to explore course details
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.replace(`/login?redirectTo=/courses/${courseId}`);
+    }
+  }, [authLoading, user, courseId, router]);
+
+  const studentName = activeStudent?.fullName || user?.fullName || "Learner";
   const studentFirstName = studentName.split(" ")[0];
 
   const [activeTab, setActiveTab] = useState<"plan" | "tests" | "kit" | "tutor" | "faq">("plan");
@@ -79,8 +87,25 @@ export default function CourseDetailsPage() {
   ];
 
   const handleEnrol = () => {
-    router.push(`/checkout?courseId=${course.id}&studentId=${activeStudent?.id || "aarav"}`);
+    const studentToEnroll = activeStudent || (students.length > 0 ? students[0] : null);
+    if (studentToEnroll?.id) {
+      router.push(`/checkout?courseId=${course.id}&studentId=${studentToEnroll.id}`);
+    } else {
+      router.push(`/checkout?courseId=${course.id}`);
+    }
   };
+
+  if (authLoading && !user) {
+    return (
+      <div className="relative flex min-h-screen w-full items-center justify-center bg-[#F9F8F5]">
+        <LoadingSessionOverlay
+          isOpen={true}
+          message="Loading course syllabus..."
+          subMessage="Fetching world roadmap and project overview."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen w-full bg-[#F9F8F5] text-[#0B0C0F] selection:bg-[#FF6026] selection:text-white">

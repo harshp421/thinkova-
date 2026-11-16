@@ -1,23 +1,34 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Logo } from "@/components/ui/Logo";
+import { LoadingSessionOverlay } from "@/components/ui/LoadingSessionOverlay";
 import { useAuth } from "@/lib/auth-context";
 
-export default function SignUpPage() {
+function SignUpForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const prefilledEmail = searchParams?.get("email") || "";
   const { signup, loginWithGoogle } = useAuth();
 
   const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(prefilledEmail);
+  const [phone, setPhone] = useState("");
+  const [whatsappUpdates, setWhatsappUpdates] = useState(true);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (prefilledEmail && !email) {
+      setEmail(prefilledEmail);
+    }
+  }, [prefilledEmail]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,6 +38,11 @@ export default function SignUpPage() {
     }
     if (!email.trim() || !email.includes("@")) {
       setErrorMessage("Please enter a valid email address.");
+      return;
+    }
+    const cleanPhone = phone.replace(/\D/g, "");
+    if (cleanPhone.length < 10) {
+      setErrorMessage("Please enter a valid 10-digit WhatsApp phone number.");
       return;
     }
     if (password.length < 6) {
@@ -40,8 +56,8 @@ export default function SignUpPage() {
     const result = await signup({
       fullName: fullName.trim(),
       email: email.trim().toLowerCase(),
-      phone: "9820011223",
-      whatsappUpdates: true,
+      phone: cleanPhone,
+      whatsappUpdates,
     });
 
     setIsLoading(false);
@@ -57,10 +73,7 @@ export default function SignUpPage() {
     setErrorMessage(null);
     setIsLoading(true);
 
-    const result = await loginWithGoogle({
-      email: email.trim() || "parent.google@thinkova.ai",
-      name: fullName.trim() || "Priya Sharma",
-    });
+    const result = await loginWithGoogle();
 
     setIsLoading(false);
 
@@ -72,7 +85,13 @@ export default function SignUpPage() {
   };
 
   return (
-    <div className="flex min-h-screen w-full flex-col lg:flex-row bg-[#F8F7F4] text-[#0B0C0F]">
+    <div className="relative flex min-h-screen w-full flex-col lg:flex-row bg-[#F8F7F4] text-[#0B0C0F]">
+      <LoadingSessionOverlay
+        isOpen={isLoading}
+        message="Creating your parent account..."
+        subMessage="Setting up safety guardrails and preparing your child's track."
+      />
+
       {/* Left Column: Dark Photo Showcase matching Figma Image 2 */}
       <div className="relative flex w-full flex-col justify-between overflow-hidden bg-[#0B0C0F] p-8 sm:p-12 lg:w-1/2 lg:min-h-screen lg:p-16">
         <Image
@@ -178,6 +197,29 @@ export default function SignUpPage() {
             </div>
 
             <div>
+              <label htmlFor="phone" className="block text-xs font-semibold text-[#0B0C0F] mb-1.5">
+                WhatsApp Phone Number
+              </label>
+              <div className="relative flex items-center">
+                <span className="absolute left-3.5 text-xs font-bold text-[#8F94A0] select-none">
+                  +91
+                </span>
+                <input
+                  id="phone"
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                  placeholder="98765 43210"
+                  required
+                  className="w-full rounded-xl border border-[#DCD8CF] bg-white py-3 pl-12 pr-4 text-sm text-[#0B0C0F] placeholder-[#8F94A0] shadow-sm outline-none transition focus:border-[#FF6026] focus:ring-2 focus:ring-[#FF6026]/15"
+                />
+              </div>
+              <p className="mt-1 text-[11px] text-[#8F94A0]">
+                We&apos;ll send your welcome orientation and child&apos;s weekly lab reports here.
+              </p>
+            </div>
+
+            <div>
               <label htmlFor="password" className="block text-xs font-semibold text-[#0B0C0F] mb-1.5">
                 Password
               </label>
@@ -199,6 +241,19 @@ export default function SignUpPage() {
                   {showPassword ? "Hide" : "Show"}
                 </button>
               </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                id="waUpdates"
+                type="checkbox"
+                checked={whatsappUpdates}
+                onChange={(e) => setWhatsappUpdates(e.target.checked)}
+                className="size-4 rounded accent-[#FF6026]"
+              />
+              <label htmlFor="waUpdates" className="text-xs text-[#5A5F6B] cursor-pointer">
+                Send welcome guide & child reports on WhatsApp
+              </label>
             </div>
 
             <button
@@ -252,5 +307,19 @@ export default function SignUpPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SignUpPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="relative flex min-h-screen w-full items-center justify-center bg-[#F8F7F4]">
+          <LoadingSessionOverlay isOpen={true} />
+        </div>
+      }
+    >
+      <SignUpForm />
+    </Suspense>
   );
 }

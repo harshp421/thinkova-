@@ -26,7 +26,7 @@ export function AppSidebar({ activeItem }: AppSidebarProps) {
   const router = useRouter();
   const { activeStudent, user } = useAuth();
 
-  const studentName = activeStudent?.fullName || "Aarav Sharma";
+  const studentName = activeStudent?.fullName || user?.fullName || "Learner";
   const studentGrade = activeStudent?.currentGrade || 6;
 
   // Derive active navigation item from prop or pathname
@@ -60,7 +60,7 @@ export function AppSidebar({ activeItem }: AppSidebarProps) {
     {
       id: "my-learning",
       label: "My learning",
-      href: "/learning",
+      href: activeStudent?.id ? `/learning/${activeStudent.id}` : "/learning",
       icon: BookOpen,
       badge: 2,
     },
@@ -128,7 +128,7 @@ export function AppSidebar({ activeItem }: AppSidebarProps) {
       <div className="space-y-3 pt-6 border-t border-white/[0.08]">
         {/* Next Live Class Card */}
         <div
-          onClick={() => router.push(`/learning/${activeStudent?.id || "aarav"}?tab=live`)}
+          onClick={() => router.push(activeStudent ? `/learning/${activeStudent.id}?tab=live` : "/who-is-learning")}
           className="group cursor-pointer rounded-2xl border border-white/[0.08] bg-[#14161D] p-3.5 shadow-inner transition hover:border-[#FF6026]/40 hover:bg-[#1A1C24]"
           title="Click to view Live classes schedule"
         >

@@ -16,9 +16,9 @@ export default function ConfirmationPage() {
   const courseId = searchParams.get("courseId") || "robotics-starter";
   const course = getCourseById(courseId);
 
-  const studentName = activeStudent?.fullName || "Aarav Sharma";
+  const studentName = activeStudent?.fullName || user?.fullName || "Learner";
   const studentFirstName = studentName.split(" ")[0];
-  const parentEmail = user?.email || "priya.sharma@gmail.com";
+  const parentEmail = user?.email || "your registered email";
   const paidAmount = searchParams.get("paid") || course.price.toLocaleString("en-IN");
 
   const handleDownloadInvoice = () => {

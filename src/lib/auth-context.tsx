@@ -42,6 +42,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   addStudent: (studentData: { fullName: string; currentGrade: number; schoolName: string; preferredTrack?: string; priorExperience?: string }) => Promise<{ success: boolean; student?: StudentProfile; recommendedEnrollUrl?: string; error?: string }>;
   setActiveStudent: (student: StudentProfile | null) => void;
+  updateUserProfile: (data: { fullName?: string; phone?: string }) => void;
   refreshStudents: () => Promise<void>;
 }
 
@@ -49,58 +50,148 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const LOCAL_STORAGE_USER_KEY = "thinkova_parent_profile";
 const LOCAL_STORAGE_ACTIVE_STUDENT_KEY = "thinkova_active_student_profile";
+const LOCAL_STORAGE_STUDENTS_KEY = "thinkova_students_list";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<ParentUser | null>(null);
-  const [students, setStudents] = useState<StudentProfile[]>([]);
-  const [activeStudent, setActiveStudentState] = useState<StudentProfile | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState<ParentUser | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return null;
+  });
+
+  const [students, setStudents] = useState<StudentProfile[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem(LOCAL_STORAGE_STUDENTS_KEY);
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return [];
+  });
+
+  const [activeStudent, setActiveStudentState] = useState<StudentProfile | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem(LOCAL_STORAGE_ACTIVE_STUDENT_KEY);
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return null;
+  });
+
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
+        if (cached) return false;
+      } catch {}
+    }
+    return true;
+  });
   const router = useRouter();
 
   // Load active session from server and synchronize device localStorage
   const initSession = useCallback(async () => {
+    // 1. Initial immediate restore from local storage to prevent UI flash
+    if (typeof window !== "undefined") {
+      try {
+        const cachedUser = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
+        if (cachedUser) {
+          setUser(JSON.parse(cachedUser));
+          setIsLoading(false);
+        }
+        const cachedStudents = localStorage.getItem(LOCAL_STORAGE_STUDENTS_KEY);
+        let parsedStudents: StudentProfile[] = [];
+        if (cachedStudents) {
+          try {
+            parsedStudents = JSON.parse(cachedStudents);
+            setStudents(parsedStudents);
+          } catch {
+            // ignore
+          }
+        }
+        const cachedActiveStudent = localStorage.getItem(LOCAL_STORAGE_ACTIVE_STUDENT_KEY);
+        if (cachedActiveStudent) {
+          try {
+            const parsedActive = JSON.parse(cachedActiveStudent);
+            setActiveStudentState(parsedActive);
+            if (parsedStudents.length === 0 && parsedActive) {
+              setStudents([parsedActive]);
+              localStorage.setItem(LOCAL_STORAGE_STUDENTS_KEY, JSON.stringify([parsedActive]));
+            }
+          } catch {
+            // ignore
+          }
+        }
+      } catch {
+        // Safe fallback
+      }
+    }
+
     try {
       const res = await fetch("/api/auth/me", { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
         if (data.authenticated && data.user) {
           setUser(data.user);
-          setStudents(data.students || []);
-          if (typeof window !== "undefined") {
-            localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(data.user));
+
+          let resolvedStudents: StudentProfile[] = data.students || [];
+
+          // Preserve cached students if server in-memory store returned empty (e.g. server hot-reload)
+          if (resolvedStudents.length === 0 && typeof window !== "undefined") {
+            const cachedStudentsStr = localStorage.getItem(LOCAL_STORAGE_STUDENTS_KEY);
+            if (cachedStudentsStr) {
+              try {
+                const parsedCached = JSON.parse(cachedStudentsStr);
+                if (Array.isArray(parsedCached) && parsedCached.length > 0) {
+                  resolvedStudents = parsedCached;
+                }
+              } catch {
+                // ignore
+              }
+            }
           }
 
           // Restore active student from localStorage if available
+          let resolvedActiveStudent: StudentProfile | null = null;
           const savedActiveStudent = typeof window !== "undefined" ? localStorage.getItem(LOCAL_STORAGE_ACTIVE_STUDENT_KEY) : null;
           if (savedActiveStudent) {
             try {
               const parsed = JSON.parse(savedActiveStudent);
-              const matched = (data.students || []).find((s: StudentProfile) => s.id === parsed.id);
-              setActiveStudentState(matched || data.students?.[0] || null);
+              const matched = resolvedStudents.find((s: StudentProfile) => s.id === parsed.id);
+              resolvedActiveStudent = matched || parsed;
             } catch {
-              setActiveStudentState(data.students?.[0] || null);
+              // ignore
             }
-          } else if (data.students?.length > 0) {
-            setActiveStudentState(data.students[0]);
+          }
+
+          if (!resolvedActiveStudent && resolvedStudents.length > 0) {
+            resolvedActiveStudent = resolvedStudents[0] || null;
+          }
+
+          if (resolvedActiveStudent && !resolvedStudents.some((s: StudentProfile) => s.id === resolvedActiveStudent?.id)) {
+            resolvedStudents = [...resolvedStudents, resolvedActiveStudent];
+          }
+
+          setStudents(resolvedStudents);
+          setActiveStudentState(resolvedActiveStudent);
+
+          if (typeof window !== "undefined") {
+            localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(data.user));
+            localStorage.setItem(LOCAL_STORAGE_STUDENTS_KEY, JSON.stringify(resolvedStudents));
+            if (resolvedActiveStudent) {
+              localStorage.setItem(LOCAL_STORAGE_ACTIVE_STUDENT_KEY, JSON.stringify(resolvedActiveStudent));
+            }
           }
           return;
         }
       }
     } catch (e) {
       console.warn("[Auth Context] Failed to fetch /api/auth/me:", e);
-    }
-
-    // Fallback: Check localStorage for device persistence
-    if (typeof window !== "undefined") {
-      const cached = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          setUser(parsed);
-        } catch {
-          setUser(null);
-        }
-      }
     }
   }, []);
 
@@ -110,6 +201,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const setActiveStudent = (student: StudentProfile | null) => {
     setActiveStudentState(student);
+    if (student) {
+      setStudents((prev) => {
+        if (!prev.some((s) => s.id === student.id)) {
+          const updated = [...prev, student];
+          if (typeof window !== "undefined") {
+            localStorage.setItem(LOCAL_STORAGE_STUDENTS_KEY, JSON.stringify(updated));
+          }
+          return updated;
+        }
+        return prev;
+      });
+    }
     if (typeof window !== "undefined") {
       if (student) {
         localStorage.setItem(LOCAL_STORAGE_ACTIVE_STUDENT_KEY, JSON.stringify(student));
@@ -119,6 +222,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updateUserProfile = (updated: { fullName?: string; phone?: string }) => {
+    setUser((prev) => {
+      if (!prev) return null;
+      const next = { ...prev, ...updated };
+      if (typeof window !== "undefined") {
+        localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(next));
+      }
+      return next;
+    });
+  };
+
   const refreshStudents = async () => {
     try {
       const res = await fetch("/api/students", { cache: "no-store" });
@@ -126,6 +240,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const data = await res.json();
         if (data.students) {
           setStudents(data.students);
+          if (typeof window !== "undefined") {
+            localStorage.setItem(LOCAL_STORAGE_STUDENTS_KEY, JSON.stringify(data.students));
+          }
         }
       }
     } catch (e) {
@@ -152,6 +269,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       if (typeof window !== "undefined") {
         localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(data.user));
+        localStorage.setItem(LOCAL_STORAGE_STUDENTS_KEY, JSON.stringify(data.students || []));
       }
       return { success: true, redirectTo: data.redirectTo || "/who-is-learning" };
     } catch (err: unknown) {
@@ -229,6 +347,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (typeof window !== "undefined") {
       localStorage.removeItem(LOCAL_STORAGE_USER_KEY);
       localStorage.removeItem(LOCAL_STORAGE_ACTIVE_STUDENT_KEY);
+      localStorage.removeItem(LOCAL_STORAGE_STUDENTS_KEY);
     }
     router.push("/login");
   };
@@ -257,7 +376,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         activeEnrollment: null,
       };
 
-      setStudents((prev) => [...prev, newStudent]);
+      setStudents((prev) => {
+        const next = [...prev, newStudent];
+        if (typeof window !== "undefined") {
+          localStorage.setItem(LOCAL_STORAGE_STUDENTS_KEY, JSON.stringify(next));
+        }
+        return next;
+      });
       setActiveStudent(newStudent);
 
       return {
@@ -282,6 +407,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signup,
         loginWithGoogle,
         logout,
+        updateUserProfile,
         addStudent,
         setActiveStudent,
         refreshStudents,

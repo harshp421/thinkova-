@@ -9,9 +9,23 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ authenticated: false }, { status: 401 });
     }
 
-    const user = await dbManager.commerce.getUserById(session.userId);
+    let user = await dbManager.commerce.getUserById(session.userId);
     if (!user) {
-      return NextResponse.json({ authenticated: false }, { status: 401 });
+      // Re-create user from verified HMAC-SHA256 session token to prevent false 401 on server reloads
+      const restoredUser = {
+        id: session.userId,
+        email: session.email,
+        username: session.username || session.email.split("@")[0] || "parent",
+        fullName: session.fullName || "Parent",
+        phone: session.phone || "",
+        role: session.role || "PARENT",
+        isPhoneVerified: Boolean(session.phone),
+        isEmailVerified: true,
+        consentTimestamp: new Date(),
+        createdAt: new Date(session.createdAt || Date.now()),
+      };
+      await dbManager.commerce.upsertUser(restoredUser);
+      user = restoredUser;
     }
 
     const students = await dbManager.commerce.getStudentsByParentId(user.id);

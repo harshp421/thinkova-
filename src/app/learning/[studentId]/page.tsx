@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
+import { BookOpen, ArrowRight } from "lucide-react";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
@@ -26,21 +27,73 @@ import {
   AskTutorModal,
   RecordingModal,
 } from "@/components/learning";
+import { LoadingSessionOverlay } from "@/components/ui/LoadingSessionOverlay";
 
 export default function MyLearningPage() {
+  const router = useRouter();
   const params = useParams();
   const searchParams = useSearchParams();
-  const { activeStudent } = useAuth();
+  const { user, activeStudent, isLoading: authLoading } = useAuth();
 
-  const studentId = String(params?.studentId || "aarav");
-  const studentName = activeStudent?.fullName || "Aarav Sharma";
+  // Authentication Guard: require login to view learning content
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.replace("/login?redirectTo=/learning");
+    }
+  }, [authLoading, user, router]);
+
+  const studentId = String(params?.studentId || activeStudent?.id || "student");
+  const studentName = activeStudent?.fullName || user?.fullName || "Learner";
+  const studentFirstName = studentName.split(" ")[0] || "Learner";
+  const studentGrade = activeStudent?.currentGrade || 6;
+
+  // Check if learner is the demo fixture or a live registered student
+  const isAaravDemo = studentId === "aarav" || activeStudent?.fullName === "Aarav Sharma";
+  const [completedLevels, setCompletedLevels] = useState<number>(isAaravDemo ? 5 : 0);
+  const [isEnrolled, setIsEnrolled] = useState<boolean>(isAaravDemo);
+  const [activeCourseTitle, setActiveCourseTitle] = useState<string>("AI for Young Creators");
+
+  useEffect(() => {
+    async function fetchStudentProgress() {
+      if (!studentId) return;
+      if (isAaravDemo) {
+        setIsEnrolled(true);
+        return;
+      }
+      try {
+        const res = await fetch(`/api/learning/progress?studentId=${studentId}`);
+        if (res.ok) {
+          const data = await res.json();
+          const hasEnrolment = Boolean(data.isEnrolled);
+          setIsEnrolled(hasEnrolment);
+          if (data.progress?.courseTitle) {
+            setActiveCourseTitle(data.progress.courseTitle);
+          } else if (data.activeEnrollments?.[0]?.courseTitle) {
+            setActiveCourseTitle(data.activeEnrollments[0].courseTitle);
+          }
+          if (data.progress?.milestones) {
+            const done = data.progress.milestones.filter((m: { completed: boolean }) => m.completed).length;
+            setCompletedLevels(done);
+          } else if (data.detailedProgress) {
+            setCompletedLevels(data.detailedProgress.levelsDone || 0);
+          }
+        }
+      } catch {
+        // Fallback default 0 for new students
+      }
+    }
+    fetchStudentProgress();
+  }, [studentId, isAaravDemo]);
+
+  const currentLevel = Math.min(8, completedLevels + 1);
+  const defaultInitialTask = completedLevels === 0 ? "level-1-problem-map" : "level-6-memory";
 
   // Dynamic URL query parameters for unique ID variations & state restoration
   const initialLesson = searchParams.get("lesson");
   const initialQuiz = searchParams.get("quiz");
   const initialViewParam = searchParams.get("view");
   const initialTabParam = searchParams.get("tab") as CourseSubTab | null;
-  const initialTaskId = searchParams.get("taskId") || "level-6-memory";
+  const initialTaskId = searchParams.get("taskId") || defaultInitialTask;
 
   const [activeView, setActiveView] = useState<ActiveTab>(
     initialViewParam === "build-task"
@@ -156,6 +209,18 @@ export default function MyLearningPage() {
     setActiveRecordingModal(session);
   };
 
+  if (authLoading && !user) {
+    return (
+      <div className="relative flex min-h-screen w-full items-center justify-center bg-[#F4F3EE]">
+        <LoadingSessionOverlay
+          isOpen={true}
+          message="Opening student portal..."
+          subMessage="Loading your lessons, build quests, and live lab timings."
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen w-full bg-[#F4F3EE] text-[#0B0C0F] selection:bg-[#FF6026] selection:text-white">
       {/* App Sidebar v2 */}
@@ -219,37 +284,81 @@ export default function MyLearningPage() {
                 </div>
               </div>
 
-              {/* Subtab 1: Courses Roadmap */}
-              {courseSubTab === "courses" && (
-                <CourseRoadmapSection
-                  isLessonCompleted={isLessonCompleted}
-                  onNavigateLesson={() => navigateView("lesson")}
-                  onNavigateQuiz={() => navigateView("quiz")}
-                  onNavigateBuildTask={(tid) =>
-                    navigateView("build-task", { taskId: tid || "level-6-memory" })
-                  }
-                />
-              )}
+              {!isEnrolled ? (
+                <div className="rounded-[28px] border border-dashed border-[#DCD8CF] bg-white p-8 text-center sm:p-14 shadow-sm">
+                  <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-[#FFF2EB] text-[#FF6026]">
+                    <BookOpen className="size-7" />
+                  </div>
 
-              {/* Subtab 2: Live Classes View */}
-              {courseSubTab === "live" && (
-                <LiveClassesSection
-                  beforeJoinList={beforeJoinList}
-                  onToggleBeforeJoin={handleToggleBeforeJoin}
-                  onOpenRecording={handleOpenRecording}
-                />
-              )}
+                  <span className="mt-4 inline-block rounded-full bg-amber-50 border border-amber-200 px-3 py-1 text-xs font-semibold text-amber-800">
+                    No active course registered
+                  </span>
 
-              {/* Subtab 3: Progress and Certificates */}
-              {courseSubTab === "progress" && (
-                <ProgressCertificatesSection
-                  studentId={studentId}
-                  studentName={studentName}
-                  onNavigateBuildTask={(tid) =>
-                    navigateView("build-task", { taskId: tid || "level-6-memory" })
-                  }
-                  onNavigateLesson={() => navigateView("lesson")}
-                />
+                  <h2 className="mt-3 font-display text-[24px] sm:text-[30px] font-semibold text-[#0B0C0F] tracking-tight">
+                    Enrol in a course to start {studentFirstName}&apos;s learning
+                  </h2>
+
+                  <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-[#5A5F6B]">
+                    {studentName} is registered in Grade {studentGrade}, but has not enrolled in a course yet. Enrol in an AI, Robotics, or Coding track to unlock live in-school lab sessions, tutor coaching, and weekly interactive worlds.
+                  </p>
+
+                  <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/explore?grade=${studentGrade}`)}
+                      className="inline-flex items-center gap-2 rounded-full bg-[#FF6026] px-7 py-3.5 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(255,96,38,0.3)] transition hover:bg-[#E8531C] active:scale-95 cursor-pointer"
+                    >
+                      <span>Enrol in a course to start your learning</span>
+                      <ArrowRight className="size-4" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => router.push("/home")}
+                      className="rounded-full border border-[#DCD8CF] bg-white px-6 py-3.5 text-sm font-semibold text-[#0B0C0F] hover:bg-[#F8F7F4] transition cursor-pointer"
+                    >
+                      Return to Dashboard
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Subtab 1: Courses Roadmap */}
+                  {courseSubTab === "courses" && (
+                    <CourseRoadmapSection
+                      isLessonCompleted={isLessonCompleted}
+                      completedLevels={completedLevels}
+                      currentLevel={currentLevel}
+                      courseTitle={activeCourseTitle}
+                      onNavigateLesson={() => navigateView("lesson")}
+                      onNavigateQuiz={() => navigateView("quiz")}
+                      onNavigateBuildTask={(tid) =>
+                        navigateView("build-task", { taskId: tid || defaultInitialTask })
+                      }
+                    />
+                  )}
+
+                  {/* Subtab 2: Live Classes View */}
+                  {courseSubTab === "live" && (
+                    <LiveClassesSection
+                      beforeJoinList={beforeJoinList}
+                      onToggleBeforeJoin={handleToggleBeforeJoin}
+                      onOpenRecording={handleOpenRecording}
+                    />
+                  )}
+
+                  {/* Subtab 3: Progress and Certificates */}
+                  {courseSubTab === "progress" && (
+                    <ProgressCertificatesSection
+                      studentId={studentId}
+                      studentName={studentName}
+                      onNavigateBuildTask={(tid) =>
+                        navigateView("build-task", { taskId: tid || "level-6-memory" })
+                      }
+                      onNavigateLesson={() => navigateView("lesson")}
+                    />
+                  )}
+                </>
               )}
 
             </div>

@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { EnrolSuccessView } from "./EnrolSuccessView";
 
 export function EnrolSection() {
-  const { user, activeStudent } = useAuth();
+  const { user, activeStudent, isLoading } = useAuth();
 
   const [childName, setChildName] = useState("");
   const [grade, setGrade] = useState("Grade 6");
@@ -110,6 +110,14 @@ export function EnrolSection() {
   const handleEnrolSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setEnrolError("");
+
+    if (!user) {
+      setEnrolError("Please sign up or log in before enrolling your child.");
+      if (typeof window !== "undefined") {
+        window.location.href = `/signup?redirectTo=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+      }
+      return;
+    }
 
     if (!childName.trim()) {
       setEnrolError("Please enter your child's full name.");
@@ -294,6 +302,20 @@ export function EnrolSection() {
                       Enter your details to reserve a place in the next in-school batch.
                     </p>
                   </div>
+
+                  {!user && !isLoading && (
+                    <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/80 p-3.5 text-xs text-amber-900">
+                      <span>
+                        <strong>Sign up or log in is required to enrol</strong> so your child&apos;s progress and kit are securely tracked in your parent portal.
+                      </span>
+                      <a
+                        href="/signup?redirectTo=/enrol"
+                        className="shrink-0 rounded-lg bg-[#FF6B2C] px-3 py-1.5 font-semibold text-white transition hover:bg-[#E05316]"
+                      >
+                        Sign Up
+                      </a>
+                    </div>
+                  )}
 
                   {linkedProfileBanner && (
                     <div className="flex items-center gap-2.5 rounded-2xl border border-[#FF6B2C]/25 bg-[#FFF5EF] px-3.5 py-2.5 text-xs text-[#0B0C0F]">
