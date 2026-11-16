@@ -19,6 +19,7 @@ interface CreateCashfreeOrderBody {
   orderType?: "FULL_PAYMENT" | "INSTALLMENT_1" | "INSTALLMENT_2";
   amountInRupees?: number;
   autoConfirm?: boolean;
+  returnUrl?: string;
 }
 
 /**
@@ -48,6 +49,16 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "Missing required fields: studentName, parentName, parentEmail, parentPhone, schoolUid" },
       { status: 422 }
+    );
+  }
+
+  if (!cashfreeClient.isConfigured()) {
+    return NextResponse.json(
+      {
+        status: "error",
+        message: "Cashfree payment gateway is not configured on the server. Please contact ThinkOva support.",
+      },
+      { status: 503 }
     );
   }
 
@@ -157,17 +168,10 @@ export async function POST(request: Request) {
         customerPhone: parentPhone,
       },
       orderNote: `ThinkOva Course Admission - ${schoolUid.toUpperCase()} (${studentName})`,
+      returnUrl: body.returnUrl,
     });
 
-    const origin = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-    const checkoutUrl =
-      cfOrder.paymentSessionId && cfOrder.environment === "SANDBOX"
-        ? `https://sandbox.cashfree.com/pg/orders/${cfOrder.orderId}`
-        : `${origin}/enrolled?orderRef=${cfOrder.orderId}&childName=${encodeURIComponent(
-            studentName
-          )}&parentEmail=${encodeURIComponent(parentEmail)}&school=${encodeURIComponent(
-            schoolUid
-          )}&plan=${paymentPlan === "INSTALLMENTS" ? "parts" : "full"}`;
+    const checkoutUrl = cfOrder.checkoutUrl || "";
 
     // 5. Persist Order in dynamic repository
     await dbManager.commerce.upsertOrder({
@@ -182,62 +186,6 @@ export async function POST(request: Request) {
       createdAt: new Date(),
     });
 
-    // When autoConfirm is requested (e.g. from the website enrolment form in demo mode),
-    // auto-complete virtual payment and immediately dispatch confirmation email (SMTP) & WhatsApp (OpenWA)!
-    if (body.autoConfirm === true) {
-      await dbManager.commerce.updateOrderStatus(cfOrder.orderId, "PAID");
-      await dbManager.commerce.updateEnrollmentStatus(enrollmentId, "ENROLLED");
-
-      await dbManager.commerce.upsertPayment({
-        id: `pay_${Date.now()}_sim`,
-        orderId: cfOrder.orderId,
-        gateway: "CASHFREE",
-        gatewayOrderId: cfOrder.orderId,
-        gatewayPaymentId: `cf_pay_sim_${Date.now()}`,
-        paymentMethod: "UPI",
-        amountInPaise,
-        status: "SUCCESS",
-        paidAt: new Date(),
-      });
-
-      const email = emailTemplates.enrolmentSuccess({
-        parentName: user?.username || parentName || "Parent",
-        studentName: student.fullName,
-        currentGrade: student.currentGrade,
-        schoolName: student.schoolUid,
-        batchSchedule: "Weekly Computer Lab Sessions",
-        tutorName: "Lead AI Mentor",
-        amountPaid: `₹${amount.toLocaleString("en-IN")}`,
-        orderId: cfOrder.orderId,
-      });
-
-      await defaultDispatcher.sendEmail({
-        to: parentEmail,
-        subject: email.subject,
-        html: email.html,
-        text: email.text,
-        metadata: { orderId: cfOrder.orderId, type: "ENROLMENT_RECEIPT" },
-      });
-
-      const wa = whatsappTemplates.enrolmentConfirmed({
-        parentPhone,
-        parentName: user?.username || parentName || "Parent",
-        studentName: student.fullName,
-        schoolName: student.schoolUid,
-        grade: student.currentGrade,
-        orderId: cfOrder.orderId,
-        amountPaid: `₹${amount.toLocaleString("en-IN")}`,
-        startDate: "the upcoming Saturday batch",
-      });
-
-      await defaultDispatcher.sendWhatsApp({
-        to: parentPhone,
-        templateName: "thinkova_enrolment_confirmed",
-        fallbackText: wa.fallbackText,
-        metadata: { orderId: cfOrder.orderId, type: "ENROLMENT_RECEIPT" },
-      });
-    }
-
     return NextResponse.json({
       status: "success",
       orderId: cfOrder.orderId,
@@ -247,7 +195,6 @@ export async function POST(request: Request) {
       amount: cfOrder.orderAmount,
       currency: cfOrder.orderCurrency,
       environment: cfOrder.environment,
-      isSimulation: cfOrder.isSimulation,
       checkoutUrl,
       enrollmentId,
     });
@@ -272,13 +219,33 @@ export async function GET(request: Request) {
   const dbOrder = await dbManager.commerce.getOrderById(orderId);
   const cfOrder = await cashfreeClient.getOrder(orderId);
 
+  // If Cashfree verifies that order is PAID but dynamic DB is not yet marked PAID:
+  const isPaid = cfOrder.orderStatus === "PAID" || dbOrder?.status === "PAID";
+  if (cfOrder.orderStatus === "PAID" && dbOrder && dbOrder.status !== "PAID") {
+    await dbManager.commerce.updateOrderStatus(orderId, "PAID");
+    if (dbOrder.enrollmentId) {
+      await dbManager.commerce.updateEnrollmentStatus(dbOrder.enrollmentId, "ENROLLED");
+    }
+    await dbManager.commerce.upsertPayment({
+      id: `pay_${Date.now()}_sync`,
+      orderId,
+      gateway: "CASHFREE",
+      gatewayOrderId: cfOrder.cfOrderId || orderId,
+      gatewayPaymentId: `cf_sync_${Date.now()}`,
+      paymentMethod: "UPI",
+      amountInPaise: Math.round(cfOrder.orderAmount * 100),
+      status: "SUCCESS",
+      paidAt: new Date(),
+    });
+  }
+
   return NextResponse.json({
     status: "ok",
     orderId,
-    dbStatus: dbOrder?.status || "NOT_FOUND",
+    dbStatus: isPaid ? "PAID" : dbOrder?.status || "NOT_FOUND",
     cashfreeStatus: cfOrder.orderStatus,
     amount: cfOrder.orderAmount,
     currency: cfOrder.orderCurrency,
-    isSimulation: cfOrder.isSimulation,
+    isPaid,
   });
 }

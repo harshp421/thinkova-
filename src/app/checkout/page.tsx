@@ -115,6 +115,12 @@ export default function CheckoutPage() {
     setErrorMessage("");
 
     try {
+      const effectiveStudentId = targetStudent?.id || (user ? `std_${user.id}` : "student");
+      const siteOrigin = typeof window !== "undefined" ? window.location.origin : "https://www.thinkova.ai";
+      const returnUrl = `${siteOrigin}/confirmation?order_id={order_id}&courseId=${encodeURIComponent(
+        course.id
+      )}&studentId=${encodeURIComponent(effectiveStudentId)}&plan=${paymentPlan}&paid=${payTodayAmount}`;
+
       // 1. Invoke Cashfree Backend Order Generation
       const cashfreeRes = await fetch("/api/cashfree/order", {
         method: "POST",
@@ -130,91 +136,60 @@ export default function CheckoutPage() {
           amountInRupees: payTodayAmount,
           courseId: course.id,
           courseTitle: course.title,
+          returnUrl,
         }),
       });
 
       const cfData = await cashfreeRes.json().catch(() => ({}));
 
-      // If Cashfree SDK is available and active on client
-      if (cfData.paymentSessionId && !cfData.isSimulation && typeof window !== "undefined") {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const loadCashfreeSdk = (): Promise<any> => {
-            return new Promise((resolve, reject) => {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              if ((window as any).Cashfree) {
-                const mode = (cfData.environment || "SANDBOX").toLowerCase();
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                resolve((window as any).Cashfree({ mode }));
-                return;
-              }
-              const script = document.createElement("script");
-              script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
-              script.async = true;
-              script.onload = () => {
-                const mode = (cfData.environment || "SANDBOX").toLowerCase();
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                resolve((window as any).Cashfree({ mode }));
-              };
-              script.onerror = () => reject(new Error("Cashfree SDK failed to load."));
-              document.body.appendChild(script);
-            });
-          };
+      if (!cashfreeRes.ok || cfData.status !== "success" || !cfData.paymentSessionId) {
+        throw new Error(
+          cfData.message || cfData.error || "Failed to initialize Cashfree payment order. Please try again."
+        );
+      }
 
-          const cashfree = await loadCashfreeSdk();
-          await cashfree.checkout({
-            paymentSessionId: cfData.paymentSessionId,
-            redirectTarget: "_self",
-          });
-          return;
-        } catch (sdkErr) {
-          console.warn("[Cashfree Checkout SDK non-fatal, redirecting to gateway]", sdkErr);
-          if (cfData.checkoutUrl) {
-            window.location.href = cfData.checkoutUrl;
+      // 2. Live Cashfree SDK Checkout v3
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const loadCashfreeSdk = (): Promise<any> => {
+        return new Promise((resolve, reject) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          if ((window as any).Cashfree) {
+            const mode = (cfData.environment || "SANDBOX").toLowerCase();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            resolve((window as any).Cashfree({ mode }));
             return;
           }
-        }
-      }
+          const script = document.createElement("script");
+          script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
+          script.async = true;
+          script.onload = () => {
+            const mode = (cfData.environment || "SANDBOX").toLowerCase();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            resolve((window as any).Cashfree({ mode }));
+          };
+          script.onerror = () =>
+            reject(
+              new Error("Cashfree Checkout SDK failed to load. Please disable ad-blockers and try again.")
+            );
+          document.body.appendChild(script);
+        });
+      };
 
-      const effectiveStudentId = targetStudent?.id || (user ? `std_${user.id}` : "student");
-
-      // 2. Complete Enrolment & Trigger OpenWA + Microsoft Email Dispatch
-      const enrolRes = await fetch("/api/courses/enrol", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          studentId: effectiveStudentId,
-          courseId: course.id,
-          courseTitle: course.title,
-          trackId: course.trackId,
-          parentUserId: user.id,
-          paymentPlan: paymentPlan === "full" ? "FULL" : "INSTALLMENTS",
-          amountInRupees: payTodayAmount,
-        }),
-      });
-
-      const enrolData = await enrolRes.json();
-      if (!enrolRes.ok) {
-        throw new Error(enrolData.error || "Enrolment failed. Please try again.");
-      }
-
-      // 3. Store freshly enrolled course into session for instant Home & My Learning sync
       try {
-        const storedEnrolled = JSON.parse(localStorage.getItem("thinkova_enrolled_courses") || "[]");
-        if (!storedEnrolled.includes(course.id)) {
-          storedEnrolled.push(course.id);
-          localStorage.setItem("thinkova_enrolled_courses", JSON.stringify(storedEnrolled));
+        const cashfree = await loadCashfreeSdk();
+        await cashfree.checkout({
+          paymentSessionId: cfData.paymentSessionId,
+          redirectTarget: "_self",
+        });
+        return;
+      } catch (sdkErr) {
+        console.warn("[Cashfree Checkout SDK non-fatal, redirecting to hosted gateway]", sdkErr);
+        if (cfData.checkoutUrl) {
+          window.location.href = cfData.checkoutUrl;
+          return;
         }
-      } catch {
-        // Safe fallback in SSR
+        throw sdkErr;
       }
-
-      // 4. Smooth redirection to Confirmation page
-      setTimeout(() => {
-        router.push(
-          `/confirmation?courseId=${course.id}&studentId=${effectiveStudentId}&plan=${paymentPlan}&paid=${payTodayAmount}`
-        );
-      }, 600);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Payment processing error";
       setErrorMessage(msg);

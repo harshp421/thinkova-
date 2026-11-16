@@ -24,8 +24,8 @@ export interface CashfreeOrderResult {
   orderStatus: "ACTIVE" | "PAID" | "EXPIRED" | "TERMINATED";
   orderAmount: number;
   orderCurrency: string;
-  environment: "SANDBOX" | "PRODUCTION" | "SIMULATION";
-  isSimulation: boolean;
+  environment: "SANDBOX" | "PRODUCTION";
+  isSimulation?: false;
   checkoutUrl?: string;
 }
 
@@ -35,14 +35,12 @@ export interface CashfreeGetOrderResult {
   orderStatus: "ACTIVE" | "PAID" | "EXPIRED" | "TERMINATED";
   orderAmount: number;
   orderCurrency: string;
-  isSimulation: boolean;
+  isSimulation?: false;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   raw?: any;
 }
 
 export class CashfreeClient {
-  private simulatedOrders: Map<string, CashfreeOrderResult> = new Map();
-
   /**
    * Checks whether live credentials have been added to environment
    */
@@ -78,50 +76,62 @@ export class CashfreeClient {
 
     return {
       configured,
-      mode: configured ? env : "SIMULATION",
+      mode: configured ? env : "UNCONFIGURED",
       environment: env,
       apiVersion: this.getApiVersion(),
       appIdMasked: maskedAppId,
       baseUrl: this.getBaseUrl(),
       instructions: configured
         ? "Cashfree live credentials active."
-        : "Operating in dynamic simulation mode. Add CASHFREE_APP_ID and CASHFREE_SECRET_KEY to .env.local to activate live gateway.",
+        : "Add CASHFREE_APP_ID and CASHFREE_SECRET_KEY to Azure environment variables to activate live gateway.",
     };
   }
 
   /**
    * Creates an order with Cashfree.
-   * Seamlessly switches between live Cashfree PG API and simulation mode.
+   * Calls the live Cashfree PG Orders API v2023-08-01.
    */
   public async createOrder(input: CashfreeCreateOrderInput): Promise<CashfreeOrderResult> {
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+    if (!this.isConfigured()) {
+      throw new Error(
+        "Cashfree payment gateway credentials are not configured on the server. CASHFREE_APP_ID and CASHFREE_SECRET_KEY must be set in server environment variables."
+      );
+    }
+
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://www.thinkova.ai";
     const isProd = (process.env.CASHFREE_ENV || "").toUpperCase() === "PRODUCTION";
 
     const returnUrl =
       input.returnUrl ||
-      (isProd && !siteUrl.startsWith("https://") ? "https://thinkova.ai/enrolled?order_id={order_id}" : `${siteUrl}/enrolled?order_id={order_id}`);
-    const notifyUrl = input.notifyUrl || (siteUrl.startsWith("https://") ? `${siteUrl}/api/cashfree/webhook` : (isProd ? "https://thinkova.ai/api/cashfree/webhook" : undefined));
+      (isProd && !siteUrl.startsWith("https://")
+        ? "https://www.thinkova.ai/confirmation?order_id={order_id}"
+        : `${siteUrl}/confirmation?order_id={order_id}`);
+    const notifyUrl =
+      input.notifyUrl ||
+      (siteUrl.startsWith("https://")
+        ? `${siteUrl}/api/cashfree/webhook`
+        : isProd
+        ? "https://www.thinkova.ai/api/cashfree/webhook"
+        : undefined);
 
-    if (!this.isConfigured()) {
-      // Dynamic Simulation Mode (for testing before credentials arrive)
-      const simulatedResult: CashfreeOrderResult = {
-        orderId: input.orderId,
-        cfOrderId: `cf_sim_${Date.now()}`,
-        paymentSessionId: `session_sim_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        orderStatus: "ACTIVE",
-        orderAmount: input.orderAmount,
-        orderCurrency: input.orderCurrency || "INR",
-        environment: "SIMULATION",
-        isSimulation: true,
-        checkoutUrl: `${siteUrl}/enrol/checkout?orderId=${encodeURIComponent(input.orderId)}&simulated=true`,
-      };
-
-      this.simulatedOrders.set(input.orderId, simulatedResult);
-      console.info(
-        `[Cashfree] Created simulated order '${input.orderId}' for ₹${input.orderAmount}. (Add credentials to switch to live PG)`
-      );
-      return simulatedResult;
+    // Clean customer phone strictly to valid 10-digit Indian domestic mobile number
+    const rawDigits = (input.customer.customerPhone || "").replace(/\D/g, "");
+    let cleanPhone = rawDigits;
+    if (cleanPhone.length === 12 && cleanPhone.startsWith("91")) {
+      cleanPhone = cleanPhone.slice(2);
+    } else if (cleanPhone.length === 11 && cleanPhone.startsWith("0")) {
+      cleanPhone = cleanPhone.slice(1);
     }
+    if (cleanPhone.length > 10) {
+      cleanPhone = cleanPhone.slice(-10);
+    }
+    if (cleanPhone.length < 10) {
+      cleanPhone = cleanPhone.padStart(10, "9");
+    }
+
+    // Clean customer name and ID
+    const customerName = (input.customer.customerName || "ThinkOva Parent").trim() || "ThinkOva Parent";
+    const customerId = (input.customer.customerId || `cust_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 50);
 
     // Live Cashfree PG Orders API v2023-08-01
     const url = `${this.getBaseUrl()}/orders`;
@@ -130,10 +140,10 @@ export class CashfreeClient {
       order_amount: input.orderAmount,
       order_currency: input.orderCurrency || "INR",
       customer_details: {
-        customer_id: input.customer.customerId,
-        customer_name: input.customer.customerName,
+        customer_id: customerId,
+        customer_name: customerName,
         customer_email: input.customer.customerEmail,
-        customer_phone: input.customer.customerPhone.replace(/^\+91/, "").replace(/\D/g, ""),
+        customer_phone: cleanPhone,
       },
       order_meta: {
         return_url: returnUrl,
@@ -163,6 +173,9 @@ export class CashfreeClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = (await res.json()) as any;
 
+    const directCheckoutUrl = isProd
+      ? `https://payments.cashfree.com/order/#${data.payment_session_id}`
+      : `https://payments-test.cashfree.com/order/#${data.payment_session_id}`;
 
     return {
       orderId: data.order_id,
@@ -173,33 +186,18 @@ export class CashfreeClient {
       orderCurrency: data.order_currency || "INR",
       environment: isProd ? "PRODUCTION" : "SANDBOX",
       isSimulation: false,
+      checkoutUrl: directCheckoutUrl,
     };
   }
 
   /**
-   * Retrieves order status from Cashfree or simulation store
+   * Retrieves order status from Cashfree
    */
   public async getOrder(orderId: string): Promise<CashfreeGetOrderResult> {
     if (!this.isConfigured()) {
-      const sim = this.simulatedOrders.get(orderId);
-      if (!sim) {
-        return {
-          orderId,
-          cfOrderId: `cf_sim_${orderId}`,
-          orderStatus: "ACTIVE",
-          orderAmount: 4999,
-          orderCurrency: "INR",
-          isSimulation: true,
-        };
-      }
-      return {
-        orderId: sim.orderId,
-        cfOrderId: sim.cfOrderId,
-        orderStatus: sim.orderStatus,
-        orderAmount: sim.orderAmount,
-        orderCurrency: sim.orderCurrency,
-        isSimulation: true,
-      };
+      throw new Error(
+        "Cashfree payment gateway credentials are not configured on the server."
+      );
     }
 
     const url = `${this.getBaseUrl()}/orders/${encodeURIComponent(orderId)}`;
@@ -235,8 +233,7 @@ export class CashfreeClient {
   public verifyWebhookSignature(signature: string, rawBody: string, timestamp: string): boolean {
     const secret = process.env.CASHFREE_SECRET_KEY;
     if (!secret) {
-      // In simulation mode, accept simulated webhook pings
-      return true;
+      return false;
     }
 
     try {
@@ -259,19 +256,6 @@ export class CashfreeClient {
       return false;
     }
   }
-
-  /**
-   * Helper to mark a simulated order as paid (for testing complete flow without real money)
-   */
-  public markSimulatedOrderPaid(orderId: string): boolean {
-    const order = this.simulatedOrders.get(orderId);
-    if (order) {
-      order.orderStatus = "PAID";
-      return true;
-    }
-    return false;
-  }
 }
 
 export const cashfreeClient = new CashfreeClient();
-

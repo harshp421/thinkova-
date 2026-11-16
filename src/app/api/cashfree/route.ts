@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 
 /**
  * GET /api/cashfree
- * Returns the current Cashfree payment gateway status, environment, and simulation mode.
+ * Returns the current Cashfree payment gateway status and environment.
  */
 export async function GET() {
   const summary = cashfreeClient.getConfigSummary();
