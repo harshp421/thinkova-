@@ -13,7 +13,7 @@ export interface OpenWASendResult {
 
 export interface OpenWASessionStatus {
   sessionId: string;
-  status: "CONNECTED" | "QR_READY" | "DISCONNECTED" | "STARTING" | "SIMULATION";
+  status: "CONNECTED" | "WORKING" | "QR_READY" | "SCAN_QR_CODE" | "DISCONNECTED" | "STARTING" | "STOPPED" | "SIMULATION";
   phone?: string;
   isSimulation: boolean;
 }
@@ -25,13 +25,13 @@ export class OpenWAClient {
   private resolvedSessionId?: string;
 
   constructor() {
-    this.baseUrl = (process.env.OPENWA_API_URL || "http://localhost:2785/api").replace(/\/$/, "");
+    this.baseUrl = (process.env.OPENWA_API_URL || "http://172.169.233.17:8008/api").replace(/\/$/, "");
     this.apiKey = process.env.OPENWA_API_KEY || "";
-    this.sessionId = process.env.OPENWA_SESSION_ID || "3efc2d7b-564a-417b-b4c0-1bf9b35515ff";
+    this.sessionId = process.env.OPENWA_SESSION_ID || "thinkova-notifications";
   }
 
   private getBaseUrl(): string {
-    return (process.env.OPENWA_API_URL || this.baseUrl || "http://localhost:2785/api").replace(/\/$/, "");
+    return (process.env.OPENWA_API_URL || this.baseUrl || "http://172.169.233.17:8008/api").replace(/\/$/, "");
   }
 
   private getApiKey(): string {
@@ -39,11 +39,11 @@ export class OpenWAClient {
   }
 
   private getSessionId(): string {
-    return (process.env.OPENWA_SESSION_ID || this.sessionId || "3efc2d7b-564a-417b-b4c0-1bf9b35515ff").trim();
+    return (process.env.OPENWA_SESSION_ID || this.sessionId || "thinkova-notifications").trim();
   }
 
   /**
-   * Automatically resolves session UUID from friendly name (e.g. "lvlup-notifications")
+   * Automatically resolves session identifier from friendly name (e.g. "thinkova-notifications")
    */
   public async getActiveSessionId(): Promise<string> {
     if (this.resolvedSessionId) return this.resolvedSessionId;
@@ -61,11 +61,11 @@ export class OpenWAClient {
         const sessions: any[] = await res.json();
         const found =
           sessions.find((s) => s.id === configuredSessionId || s.name === configuredSessionId) ||
-          sessions.find((s) => s.status === "ready" || s.status === "connected") ||
+          sessions.find((s) => s.status === "WORKING" || s.status === "ready" || s.status === "connected") ||
           sessions[0];
         if (found) {
-          this.resolvedSessionId = found.id;
-          return found.id;
+          this.resolvedSessionId = found.id || found.name;
+          return this.resolvedSessionId as string;
         }
       }
     } catch {
@@ -253,7 +253,7 @@ export class OpenWAClient {
       return {
         sessionId,
         status: data?.status || "CONNECTED",
-        phone: data?.phone,
+        phone: data?.phone || data?.me?.id,
         isSimulation: false,
       };
     } catch {

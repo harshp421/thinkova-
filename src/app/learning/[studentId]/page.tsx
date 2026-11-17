@@ -47,19 +47,13 @@ export default function MyLearningPage() {
   const studentFirstName = studentName.split(" ")[0] || "Learner";
   const studentGrade = activeStudent?.currentGrade || 6;
 
-  // Check if learner is the demo fixture or a live registered student
-  const isAaravDemo = studentId === "aarav" || activeStudent?.fullName === "Aarav Sharma";
-  const [completedLevels, setCompletedLevels] = useState<number>(isAaravDemo ? 5 : 0);
-  const [isEnrolled, setIsEnrolled] = useState<boolean>(isAaravDemo);
-  const [activeCourseTitle, setActiveCourseTitle] = useState<string>("AI for Young Creators");
+  const [completedLevels, setCompletedLevels] = useState<number>(0);
+  const [isEnrolled, setIsEnrolled] = useState<boolean>(Boolean(activeStudent?.isEnrolled));
+  const [activeCourseTitle, setActiveCourseTitle] = useState<string>("ThinkOva Studio Course");
 
   useEffect(() => {
     async function fetchStudentProgress() {
       if (!studentId) return;
-      if (isAaravDemo) {
-        setIsEnrolled(true);
-        return;
-      }
       try {
         const res = await fetch(`/api/learning/progress?studentId=${studentId}`);
         if (res.ok) {
@@ -83,7 +77,7 @@ export default function MyLearningPage() {
       }
     }
     fetchStudentProgress();
-  }, [studentId, isAaravDemo]);
+  }, [studentId]);
 
   const currentLevel = Math.min(8, completedLevels + 1);
   const defaultInitialTask = completedLevels === 0 ? "level-1-problem-map" : "level-6-memory";

@@ -28,7 +28,20 @@ export async function GET(req: NextRequest) {
       user = restoredUser;
     }
 
-    const students = await dbManager.commerce.getStudentsByParentId(user.id);
+    const rawStudents = await dbManager.commerce.getStudentsByParentId(user.id);
+    const students = await Promise.all(
+      rawStudents.map(async (student) => {
+        const enrollments = await dbManager.commerce.getEnrollmentsByStudentId(student.id);
+        const activeEnrollment = enrollments.find(
+          (e) => e.status === "ENROLLED"
+        );
+        return {
+          ...student,
+          isEnrolled: Boolean(activeEnrollment && activeEnrollment.status === "ENROLLED"),
+          activeEnrollment: activeEnrollment || null,
+        };
+      })
+    );
 
     return NextResponse.json({
       authenticated: true,

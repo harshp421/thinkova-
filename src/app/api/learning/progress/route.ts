@@ -23,10 +23,10 @@ export async function GET(req: NextRequest) {
     );
     const isEnrolled = activeEnrollments.some((e) => e.status === "ENROLLED");
 
-    const studentName = student?.fullName || (studentId === "aarav" ? "Aarav Sharma" : "Learner");
+    const studentName = student?.fullName || "Learner";
     const completedLevels = progress
       ? progress.milestones.filter((m) => m.completed).length
-      : (studentId === "aarav" ? 5 : 0);
+      : 0;
     const detailedProgress = getStudentProgressData(studentId, courseId, studentName, completedLevels);
 
     return NextResponse.json({

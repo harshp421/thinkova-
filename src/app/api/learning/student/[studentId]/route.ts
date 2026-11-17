@@ -10,180 +10,159 @@ export async function GET(
     const { studentId } = await params;
     const requestedCourseId = req.nextUrl.searchParams.get("courseId") || undefined;
 
-    // Fetch student from DB or provide fallback
-    let student = await dbManager.commerce.getStudentById(studentId);
-    if (!student && studentId === "aarav") {
-      student = {
-        id: "aarav",
-        parentUserId: "usr_priya_sharma",
-        fullName: "Aarav Sharma",
-        currentGrade: 6,
-        schoolName: "The Bishop's School",
-        schoolUid: "THE_BISHOPS_SCHOOL",
-        preferredTrack: "ai",
-        priorExperience: "intermediate",
-        createdAt: new Date(),
-      };
-      await dbManager.commerce.upsertStudent(student);
-    }
-
+    // 1. Fetch student from MongoDB Atlas
+    const student = await dbManager.commerce.getStudentById(studentId);
     if (!student) {
       return NextResponse.json({ error: "Student not found." }, { status: 404 });
     }
 
-    // Get active enrollments
+    // 2. Query active enrollments for this student
     const enrollments = await dbManager.commerce.getEnrollmentsByStudentId(student.id);
+    const activeEnrollments = (enrollments || []).filter(
+      (e) => e.status === "ENROLLED" || e.status === "PENDING_PAYMENT"
+    );
     const activeEnrollment = requestedCourseId
-      ? enrollments.find((e) => e.courseId === requestedCourseId) || enrollments[0]
-      : enrollments[0];
+      ? activeEnrollments.find((e) => e.courseId === requestedCourseId) || activeEnrollments[0]
+      : activeEnrollments.find((e) => e.status === "ENROLLED") || activeEnrollments[0];
 
-    const courseId = activeEnrollment?.courseId || "ai-study-helper";
-    const course = getCourseById(courseId) || allCourses[0];
+    // If the student has no active enrollments yet, return a clean unenrolled state
+    if (!activeEnrollment || activeEnrollment.status !== "ENROLLED") {
+      return NextResponse.json({
+        success: true,
+        student,
+        course: null,
+        isEnrolled: false,
+        activeLevelNumber: 0,
+        progressPercentage: 0,
+        nextLiveClass: null,
+        levels: [],
+        activeBuildTask: null,
+        materials: [],
+        otherCourses: allCourses.slice(0, 3).map((c) => ({
+          id: c.id,
+          title: c.title,
+          batchDate: c.nextBatch,
+          image: c.image,
+        })),
+      });
+    }
 
-    // Build the dynamic 8-level curriculum roadmap matching Figma 741:3244
-    const levels = [
-      {
-        levelNumber: 1,
-        title: "Level 1 · Problem map",
-        weekTitle: "Week 1 · build task reviewed",
-        status: "completed",
-        score: 95,
-        actionLabel: "Review",
-      },
-      {
-        levelNumber: 2,
-        title: "Level 2 · Tested prompts",
-        weekTitle: "Week 2 · build task reviewed",
-        status: "completed",
-        score: 92,
-        actionLabel: "Review",
-      },
-      {
-        levelNumber: 3,
-        title: "Level 3 · AI creation",
-        weekTitle: "Week 3 · build task reviewed",
-        status: "completed",
-        score: 90,
-        actionLabel: "Review",
-      },
-      {
-        levelNumber: 4,
-        title: "Level 4 · Interactive flow",
-        weekTitle: "Week 4 · build task reviewed",
-        status: "completed",
-        score: 96,
-        actionLabel: "Review",
-      },
-      {
-        levelNumber: 5,
-        title: "Level 5 · Agent blueprint",
-        weekTitle: "Week 5 · build task reviewed",
-        status: "completed",
-        score: 94,
-        actionLabel: "Review",
-      },
-      {
-        levelNumber: 6,
-        title: "Level 6 · Working agent",
-        weekTitle: "Week 6 · 2 of 5 lessons done",
-        status: "in_progress",
-        actionLabel: "In progress",
+    const courseId = activeEnrollment.courseId || "robotics-starter";
+    const [dbCourse, tutorVideos, courseProgress, assessments] = await Promise.all([
+      dbManager.schools.getCourseById(courseId),
+      dbManager.schools.getCourseVideos(courseId),
+      dbManager.commerce.getCourseProgressByStudent(student.id, courseId),
+      dbManager.commerce.getAssessmentsByStudentId(student.id),
+    ]);
+
+    const fallbackCourse = getCourseById(courseId) || allCourses[0];
+    const course = dbCourse || fallbackCourse;
+
+    const videoMap = new Map(tutorVideos.map((v) => [v.weekNumber, v.videoUrl]));
+    const weeklyPlan = dbCourse?.weeklyPlan || fallbackCourse?.weeklyPlan || [];
+
+    // Derive completed milestones from MongoDB Atlas
+    const completedSet = new Set<number>();
+    if (courseProgress?.milestones) {
+      courseProgress.milestones.forEach((m) => {
+        if (m.completed) completedSet.add(m.weekNumber);
+      });
+    }
+    if (assessments) {
+      assessments.forEach((a) => {
+        if (a.attendance === "PRESENT" && a.tutorScore >= 3) {
+          completedSet.add(a.levelNumber);
+        }
+      });
+    }
+
+    const currentActiveLevel = courseProgress?.currentWeek || (completedSet.size + 1);
+
+    // Build levels dynamically from real weeklyPlan
+    const levels = weeklyPlan.map((wp) => {
+      const planItem = wp as unknown as { week: number; title: string; subtitle?: string; videoUrl?: string; recordingDuration?: string };
+      const isCompleted = completedSet.has(planItem.week);
+      const isActive = planItem.week === currentActiveLevel && !isCompleted;
+      const isLocked = planItem.week > currentActiveLevel;
+
+      const weekVideo = videoMap.get(planItem.week) || (planItem.videoUrl ? planItem.videoUrl : undefined);
+
+      return {
+        levelNumber: planItem.week,
+        title: `Level ${planItem.week} · ${planItem.title}`,
+        weekTitle: isCompleted
+          ? `Week ${planItem.week} · completed`
+          : isActive
+          ? `Week ${planItem.week} · in progress`
+          : `Week ${planItem.week} · opens after level ${planItem.week - 1}`,
+        status: isCompleted ? "completed" : isActive ? "in_progress" : "locked",
+        score: isCompleted ? 95 : undefined,
+        actionLabel: isCompleted ? "Review" : isActive ? "In progress" : undefined,
         lessons: [
           {
-            id: "lesson-1",
+            id: `lesson-${planItem.week}-1`,
             lessonNumber: 1,
-            title: "Starter template",
+            title: planItem.title,
             type: "Video",
-            duration: "12 min",
-            status: "done",
-            videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ",
+            duration: planItem.recordingDuration || "18 min",
+            status: isCompleted ? "done" : isActive ? "resume" : "up_next",
+            videoUrl: weekVideo,
           },
           {
-            id: "lesson-2",
+            id: `lesson-${planItem.week}-2`,
             lessonNumber: 2,
-            title: "Agent instructions",
+            title: `${planItem.title} · Build Quest`,
             type: "Build task",
-            duration: "15 min",
-            status: "done",
-          },
-          {
-            id: "lesson-3",
-            lessonNumber: 3,
-            title: "Connect the steps",
-            type: "Video",
-            duration: "18 min",
-            status: "resume",
-            tutor: "Ms Ananya Rao",
-            overviewText:
-              "Your agent can now read a question. In this lesson you join two steps so the answer from the first step feeds the second. Then you test it with a real question from your class.",
-            chapters: [
-              { timestamp: "00:00", title: "Why order matters", status: "watched" },
-              { timestamp: "04:10", title: "Connecting two steps", status: "playing" },
-              { timestamp: "11:30", title: "Test it with a real question", status: "upcoming" },
-            ],
-          },
-          {
-            id: "lesson-4",
-            lessonNumber: 4,
-            title: "Test two tasks",
-            type: "Quiz",
-            duration: "14 min",
-            status: "up_next",
-          },
-          {
-            id: "lesson-5",
-            lessonNumber: 5,
-            title: "Improve and protect",
-            type: "Video",
-            duration: "16 min",
-            status: "up_next",
+            duration: "20 min",
+            status: isCompleted ? "done" : "up_next",
           },
         ],
-      },
-      {
-        levelNumber: 7,
-        title: "Level 7 · Improve and polish",
-        weekTitle: "Week 7 · opens after level 6",
-        status: "locked",
-      },
-      {
-        levelNumber: 8,
-        title: "Level 8 · Demo for parents",
-        weekTitle: "Week 8 · opens after level 7",
-        status: "locked",
-      },
-    ];
+      };
+    });
 
-    // Build Task details
+    // Derive active build task
     const activeBuildTask = {
-      title: "Give your agent a memory",
-      dueDate: "Due Fri, 9:00 PM",
-      statusText: "1 of 3 checks done · draft saved",
+      title: `Level ${currentActiveLevel} Build Quest`,
+      dueDate: "Due before Saturday's lab",
+      statusText: "Ready for workspace",
       checks: [
-        { id: "c1", label: "Agent remembers previous question subject", passed: true },
-        { id: "c2", label: "Politely responds with clarification hint", passed: false },
-        { id: "c3", label: "Saves conversation session locally", passed: false },
+        { id: "c1", label: "Core logic implemented in project editor", passed: false },
+        { id: "c2", label: "Tested with sample input parameters", passed: false },
       ],
     };
 
-    // Downloadable Materials
+    // Materials
     const materials = [
-      { id: "m1", title: "Level 6 worksheet", type: "PDF · 2 pages", filename: "Level-6-Worksheet.pdf" },
-      { id: "m2", title: "Agent template", type: "Opens in the builder", filename: "thinkova-agent-template.json" },
-      { id: "m3", title: "Safety checklist", type: "PDF · 1 page", filename: "Safety-Checklist.pdf" },
+      { id: "m1", title: `Level ${currentActiveLevel} Lab Guide`, type: "PDF · In-school lab", filename: `Level-${currentActiveLevel}-Guide.pdf` },
+      { id: "m2", title: "Safety and Ethics Checklist", type: "PDF · 1 page", filename: "Safety-Checklist.pdf" },
     ];
+
+    // Live Class Schedule from Batch in Atlas
+    let nextLiveClass = null;
+    if (activeEnrollment.cohortBatchId) {
+      const batch = await dbManager.schools.getBatch(activeEnrollment.cohortBatchId);
+      if (batch) {
+        const tutor = batch.tutorId ? await dbManager.schools.getTutor(batch.tutorId) : null;
+        nextLiveClass = {
+          time: `${batch.dayOfWeek || "Saturday"}, ${batch.startTime || "10:00"}`,
+          tutor: tutor?.fullName || "Assigned Lab Mentor",
+          topic: `Level ${currentActiveLevel} · In-School Studio Lab`,
+        };
+      }
+    }
+
+    const progressPercentage = levels.length > 0
+      ? Math.round((completedSet.size / levels.length) * 100)
+      : 0;
 
     return NextResponse.json({
       success: true,
       student,
       course,
-      activeLevelNumber: 6,
-      progressPercentage: 68,
-      nextLiveClass: {
-        time: "Thu, 6:00 PM",
-        tutor: "Ms Ananya Rao",
-        topic: "Level 7 · Personalise and improve",
-      },
+      isEnrolled: true,
+      activeLevelNumber: currentActiveLevel,
+      progressPercentage,
+      nextLiveClass,
       levels,
       activeBuildTask,
       materials,
@@ -202,4 +181,3 @@ export async function GET(
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
-

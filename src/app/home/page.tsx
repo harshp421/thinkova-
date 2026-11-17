@@ -32,19 +32,13 @@ export default function HomePage() {
   const studentName = activeStudent?.fullName || user?.fullName || "Learner";
   const firstName = studentName.split(" ")[0];
   const studentGrade = activeStudent?.currentGrade || 6;
-  const isAaravDemo = activeStudent?.fullName === "Aarav Sharma" || activeStudent?.id === "aarav";
-  const [completedLevels, setCompletedLevels] = useState<number>(isAaravDemo ? 5 : 0);
-  const [isEnrolled, setIsEnrolled] = useState<boolean>(isAaravDemo);
+  const [completedLevels, setCompletedLevels] = useState<number>(0);
+  const [isEnrolled, setIsEnrolled] = useState<boolean>(Boolean(activeStudent?.isEnrolled));
   const [activeEnrolledCourses, setActiveEnrolledCourses] = useState<Course[]>([]);
 
   useEffect(() => {
     async function loadProgress() {
       if (!activeStudent?.id) return;
-      if (isAaravDemo) {
-        setIsEnrolled(true);
-        setActiveEnrolledCourses([allCourses[0]!, allCourses[1]!]);
-        return;
-      }
       try {
         const res = await fetch(`/api/learning/progress?studentId=${activeStudent.id}`);
         if (res.ok) {
@@ -71,7 +65,7 @@ export default function HomePage() {
       }
     }
     loadProgress();
-  }, [activeStudent, isAaravDemo]);
+  }, [activeStudent]);
 
   const hasActiveEnrolment = isEnrolled || Boolean(activeStudent?.isEnrolled);
 

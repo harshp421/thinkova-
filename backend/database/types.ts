@@ -62,6 +62,87 @@ export interface CohortBatchEntity {
   createdAt: Date;
 }
 
+export interface CourseWeeklyPlanItem {
+  week: number;
+  title: string;
+  subtitle: string;
+  tags?: string[];
+  videoUrl?: string;
+  recordingDuration?: string;
+  uploadedAt?: Date;
+}
+
+export interface CourseVideoEntity {
+  id: string;
+  courseId: string;
+  batchId?: string;
+  weekNumber: number;
+  lessonNumber?: number;
+  title: string;
+  videoUrl: string;
+  tutorId?: string;
+  tutorName?: string;
+  duration?: string;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CourseEntity {
+  id: string; // e.g. "robotics-starter"
+  title: string;
+  trackId: string; // "robotics", "electronics", "ai", "games", "design"
+  trackName: string;
+  grades: string; // "Grades 5–7"
+  minGrade: number; // 5
+  maxGrade: number; // 7
+  targetGrades: number[]; // [5, 6, 7]
+  duration: string; // "6 weeks"
+  price: number; // 5499
+  priceFormatted: string; // "₹5,499"
+  twoPartsPriceFormatted: string; // "₹5,999"
+  firstPartFormatted: string; // "₹3,000"
+  secondPartFormatted: string; // "₹2,999"
+  nextBatch: string; // "Starts 6 Dec"
+  summary: string;
+  whatTheyBuild: string;
+  image: string;
+  heroImage?: string;
+  popularTag?: string;
+  kitIncluded?: boolean;
+  classSchedule?: string;
+  location?: string;
+  seatsLeft?: number;
+  demoDayPromise?: string;
+  demoDayTests?: string[];
+  tutor?: {
+    name: string;
+    title: string;
+    bio: string;
+    avatar?: string;
+  };
+  weeklyPlan?: CourseWeeklyPlanItem[];
+  status: "ACTIVE" | "ARCHIVED";
+  createdAt: Date;
+  updatedAt?: Date;
+}
+
+export interface TrackEntity {
+  id: string; // "robotics", "electronics", "ai", "games", "design"
+  name: string;
+  slug: string;
+  filterLabel: string;
+  tagline: string;
+  description: string;
+  priceRange: string;
+  minPrice: number;
+  gradeRange: string;
+  image: string;
+  courseIds: string[];
+  status: "ACTIVE" | "ARCHIVED";
+  createdAt: Date;
+}
+
 // ==========================================
 // 2. students_commerce_db Entities
 // ==========================================
@@ -187,6 +268,17 @@ export interface CourseMilestone {
   completedAt?: Date;
   artifactUrl?: string;
   tutorNote?: string;
+  videoUrl?: string;
+}
+
+export interface OrderWithFullDetails {
+  order: OrderEntity;
+  payment: PaymentEntity | null;
+  enrollment: EnrollmentEntity;
+  student: StudentEntity;
+  user: UserEntity;
+  course: CourseEntity | null;
+  batch: CohortBatchEntity | null;
 }
 
 export interface CourseProgressEntity {

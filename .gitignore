@@ -3,11 +3,7 @@ node_modules
 out
 next-env.d.ts
 *.tsbuildinfo
-.env
-.env.local
 .env.*.local
-.env.production
-.env.development
 !.env.example
 .DS_Store
 branch_structure.json

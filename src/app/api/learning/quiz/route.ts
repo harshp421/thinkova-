@@ -117,7 +117,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const studentId = String(body.studentId || "aarav");
+    const studentId = String(body.studentId || "learner");
     const userAnswers: Record<string, string> = body.answers || {}; // e.g. { q1: "B", q2: "B", ... }
 
     // Pedagogic Baseline Defaults: allows single-question test evaluation while matching Figma benchmark states

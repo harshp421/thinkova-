@@ -76,6 +76,7 @@ export async function POST(req: NextRequest) {
     };
 
     await dbManager.commerce.upsertStudent(student);
+    console.log(`[Students API] Student profile persisted to database: ${student.id} (${student.fullName})`);
 
     // Recommended enrol URL for frictionless step 2
     const recommendedEnrollUrl = `/enrol?studentId=${student.id}&studentName=${encodeURIComponent(student.fullName)}&grade=${student.currentGrade}&track=${encodeURIComponent(preferredTrack)}`;
