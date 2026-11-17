@@ -19,7 +19,6 @@ export class UniversalSchemaMapper {
     // Dialect specific primary key mapping
     if (dialect === "mongodb") {
       raw._id = raw.id;
-      // Keep raw.id for convenience or delete if pure mongo
     } else if (dialect === "dynamodb") {
       raw.PK = `${collection.toUpperCase()}#${raw.id}`;
       raw.SK = "METADATA";

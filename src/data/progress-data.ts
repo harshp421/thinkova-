@@ -231,7 +231,7 @@ export function getStudentProgressData(
     CANONICAL_COURSES_PROGRESS[courseId] ||
     CANONICAL_COURSES_PROGRESS["ai-for-young-creators"]!;
 
-  // If studentId is "aarav" and no explicit completedLevels passed, preserve canonical demo data
+  // If studentId is "aarav" and no explicit completedLevels passed, preserve canonical test fixture
   if (studentId === "aarav" && completedLevels === undefined) {
     return {
       ...base,
@@ -243,7 +243,7 @@ export function getStudentProgressData(
     };
   }
 
-  // For all new students, start dynamically according to completed levels (default: 0 / Level 1)
+  // Dynamic calculation according to completed levels (default: 0 / Level 1 for new students)
   const levelsDone = completedLevels !== undefined ? Math.max(0, Math.min(8, completedLevels)) : 0;
   const lessonsPerLevel = 5;
   const lessonsDone = levelsDone * lessonsPerLevel;

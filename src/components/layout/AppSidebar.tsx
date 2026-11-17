@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -16,6 +16,7 @@ import { Logo } from "@/components/ui/Logo";
 import { StudentAvatar } from "@/components/ui/StudentAvatar";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
+import type { LiveClassSession } from "@/data/live-classes";
 
 interface AppSidebarProps {
   activeItem?: "home" | "explore" | "my-learning" | "events" | "profile";
@@ -26,8 +27,37 @@ export function AppSidebar({ activeItem }: AppSidebarProps) {
   const router = useRouter();
   const { activeStudent, user } = useAuth();
 
+  const [liveClass, setLiveClass] = useState<LiveClassSession | null>(null);
+
   const studentName = activeStudent?.fullName || user?.fullName || "Learner";
   const studentGrade = activeStudent?.currentGrade || 6;
+
+  // Query actual live class data only if student has an active course enrollment
+  useEffect(() => {
+    if (!activeStudent?.id || !activeStudent.isEnrolled) {
+      setLiveClass(null);
+      return;
+    }
+
+    let isMounted = true;
+    fetch(`/api/learning/live-classes?studentId=${encodeURIComponent(activeStudent.id)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!isMounted) return;
+        if (data?.isEnrolled && data?.nextLiveClass) {
+          setLiveClass(data.nextLiveClass);
+        } else {
+          setLiveClass(null);
+        }
+      })
+      .catch(() => {
+        if (isMounted) setLiveClass(null);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeStudent?.id, activeStudent?.isEnrolled]);
 
   // Derive active navigation item from prop or pathname
   const currentNav =
@@ -62,7 +92,7 @@ export function AppSidebar({ activeItem }: AppSidebarProps) {
       label: "My learning",
       href: activeStudent?.id ? `/learning/${activeStudent.id}` : "/learning",
       icon: BookOpen,
-      badge: 2,
+      badge: liveClass?.status === "LIVE_NOW" ? 1 : undefined,
     },
     {
       id: "events",
@@ -113,7 +143,7 @@ export function AppSidebar({ activeItem }: AppSidebarProps) {
                   <span>{item.label}</span>
                 </div>
 
-                {item.badge && (
+                {item.badge !== undefined && (
                   <span className="flex size-4 items-center justify-center rounded-full bg-[#FF6026] text-[10px] font-bold text-white shadow-sm">
                     {item.badge}
                   </span>
@@ -124,30 +154,32 @@ export function AppSidebar({ activeItem }: AppSidebarProps) {
         </nav>
       </div>
 
-      {/* Bottom Group: Next live class widget + Active Student Profile */}
+      {/* Bottom Group: Next live class widget (if enrolled & active) + Active Student Profile */}
       <div className="space-y-3 pt-6 border-t border-white/[0.08]">
-        {/* Next Live Class Card */}
-        <div
-          onClick={() => router.push(activeStudent ? `/learning/${activeStudent.id}?tab=live` : "/who-is-learning")}
-          className="group cursor-pointer rounded-2xl border border-white/[0.08] bg-[#14161D] p-3.5 shadow-inner transition hover:border-[#FF6026]/40 hover:bg-[#1A1C24]"
-          title="Click to view Live classes schedule"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#FF8B4E]">
-              <Radio className="size-3 animate-pulse text-[#FF6026]" />
-              <span>Next Live Class</span>
+        {/* Next Live Class Card: Strictly conditional - shown ONLY when student is enrolled & live class is scheduled */}
+        {liveClass && (
+          <div
+            onClick={() => router.push(activeStudent ? `/learning/${activeStudent.id}?tab=live` : "/who-is-learning")}
+            className="group cursor-pointer rounded-2xl border border-white/[0.08] bg-[#14161D] p-3.5 shadow-inner transition hover:border-[#FF6026]/40 hover:bg-[#1A1C24]"
+            title="Click to view Live classes schedule"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#FF8B4E]">
+                <Radio className={cn("size-3 text-[#FF6026]", liveClass.status === "LIVE_NOW" && "animate-pulse")} />
+                <span>{liveClass.status === "LIVE_NOW" ? "Class is Live Now" : "Next Live Class"}</span>
+              </div>
+              <ChevronRight className="size-3 text-white/30 group-hover:text-white/70 transition" />
             </div>
-            <ChevronRight className="size-3 text-white/30 group-hover:text-white/70 transition" />
+            <div className="mt-1.5 text-sm font-bold text-white group-hover:text-[#FF8B4E] transition">
+              {liveClass.dateDisplay}{liveClass.timeDisplay ? `, ${liveClass.timeDisplay}` : ""}
+            </div>
+            <div className="mt-0.5 text-xs text-white/50">
+              Level {liveClass.levelNumber} · {liveClass.tutorName}
+            </div>
           </div>
-          <div className="mt-1.5 text-sm font-bold text-white group-hover:text-[#FF8B4E] transition">
-            Thu, 6:00 PM
-          </div>
-          <div className="mt-0.5 text-xs text-white/50">
-            Level 7 · Ms Ananya
-          </div>
-        </div>
+        )}
 
-        {/* Active Learner Pill (Aarav Sharma · switch learner) */}
+        {/* Active Learner Pill (Gunvanth · switch learner) */}
         <div
           onClick={() => router.push("/who-is-learning")}
           className="group flex cursor-pointer items-center justify-between rounded-2xl border border-white/10 bg-white/[0.05] p-2.5 transition hover:border-[#FF6026]/40 hover:bg-white/[0.09]"
@@ -170,4 +202,3 @@ export function AppSidebar({ activeItem }: AppSidebarProps) {
     </aside>
   );
 }
-

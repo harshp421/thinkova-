@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
 import { cashfreeClient } from "../../../../../backend/payments/cashfree";
 import { dbManager } from "../../../../../backend/database/client";
-import { defaultDispatcher } from "../../../../../backend/notifications/dispatcher";
-import { emailTemplates } from "../../../../../backend/templates/email-templates";
-import { whatsappTemplates } from "../../../../../backend/templates/whatsapp-templates";
 
 export const runtime = "nodejs";
 
 interface CreateCashfreeOrderBody {
   orderId?: string;
+  studentId?: string;
   studentName: string;
   parentName: string;
   parentEmail: string;
@@ -18,13 +16,16 @@ interface CreateCashfreeOrderBody {
   paymentPlan?: "FULL" | "INSTALLMENTS";
   orderType?: "FULL_PAYMENT" | "INSTALLMENT_1" | "INSTALLMENT_2";
   amountInRupees?: number;
+  courseId?: string;
+  courseTitle?: string;
+  trackId?: string;
   autoConfirm?: boolean;
   returnUrl?: string;
 }
 
 /**
  * POST /api/cashfree/order
- * Initiates an order with Cashfree (or dynamic simulator) and persists order state.
+ * Initiates an order with Cashfree and links student, course, and enrollment in MongoDB Atlas.
  */
 export async function POST(request: Request) {
   let body: CreateCashfreeOrderBody;
@@ -43,6 +44,7 @@ export async function POST(request: Request) {
     grade = 6,
     paymentPlan = "FULL",
     orderType = paymentPlan === "INSTALLMENTS" ? "INSTALLMENT_1" : "FULL_PAYMENT",
+    courseId = "robotics-starter",
   } = body;
 
   if (!parentEmail || !parentPhone || !studentName || !schoolUid) {
@@ -62,17 +64,15 @@ export async function POST(request: Request) {
     );
   }
 
-  // Determine amount in rupees (FULL: ₹4,999, INSTALLMENT: ₹2,499)
   const defaultAmount = orderType === "FULL_PAYMENT" ? 4999 : 2499;
   const amount = body.amountInRupees || defaultAmount;
   const amountInPaise = Math.round(amount * 100);
 
   const orderId = body.orderId || `ord_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const userId = `usr_${parentPhone.replace(/\D/g, "")}`;
-  const studentId = `stu_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const enrollmentId = `enr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
-  // 1. Ensure User entity exists in dynamic repository
+  // 1. Ensure Parent User entity exists in thinkova_commerce.users
   let user = await dbManager.commerce.getUserById(userId);
   if (!user) {
     const newUser = {
@@ -90,16 +90,26 @@ export async function POST(request: Request) {
     user = newUser;
   }
 
-  // 2. Ensure Student entity exists
-  const student = {
-    id: studentId,
-    parentUserId: userId,
-    fullName: studentName,
-    schoolUid: schoolUid.toUpperCase().trim(),
-    currentGrade: grade,
-    createdAt: new Date(),
-  };
-  await dbManager.commerce.upsertStudent(student);
+  // 2. Ensure Student entity exists in thinkova_commerce.students (re-use if provided)
+  let studentId = body.studentId;
+  let student = studentId ? await dbManager.commerce.getStudentById(studentId) : null;
+  if (!student) {
+    studentId = `stu_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    student = {
+      id: studentId,
+      parentUserId: userId,
+      fullName: studentName,
+      schoolUid: schoolUid.toUpperCase().trim(),
+      currentGrade: grade,
+      preferredTrack: body.trackId || "robotics",
+      createdAt: new Date(),
+    };
+    await dbManager.commerce.upsertStudent(student);
+  } else {
+    student.schoolUid = schoolUid.toUpperCase().trim();
+    student.currentGrade = grade;
+    await dbManager.commerce.upsertStudent(student);
+  }
 
   // 2.5 Ensure School and Batch exist dynamically
   const school = await dbManager.schools.findByUid(schoolUid);
@@ -141,11 +151,12 @@ export async function POST(request: Request) {
     });
   }
 
-  // 3. Create Enrollment entity
+  // 3. Create Enrollment entity with courseId connection in thinkova_commerce.enrollments
   const enrollment = {
     id: enrollmentId,
-    studentId,
-    cohortBatchId: `batch_${schoolUid.toLowerCase()}_01`,
+    studentId: student.id,
+    cohortBatchId: batchId,
+    courseId,
     schoolUid: schoolUid.toUpperCase().trim(),
     paymentPlan,
     status: "PENDING_PAYMENT" as const,
@@ -173,7 +184,7 @@ export async function POST(request: Request) {
 
     const checkoutUrl = cfOrder.checkoutUrl || "";
 
-    // 5. Persist Order in dynamic repository
+    // 5. Persist Order in thinkova_commerce.orders
     await dbManager.commerce.upsertOrder({
       id: orderId,
       enrollmentId,
@@ -182,7 +193,7 @@ export async function POST(request: Request) {
       amountInPaise,
       status: "AWAITING_PAYMENT",
       checkoutUrl,
-      expiresAt: new Date(Date.now() + 2 * 3600 * 1000), // 2 hour hold
+      expiresAt: new Date(Date.now() + 2 * 3600 * 1000),
       createdAt: new Date(),
     });
 
@@ -197,6 +208,8 @@ export async function POST(request: Request) {
       environment: cfOrder.environment,
       checkoutUrl,
       enrollmentId,
+      studentId,
+      courseId,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -206,7 +219,7 @@ export async function POST(request: Request) {
 
 /**
  * GET /api/cashfree/order?orderId=...
- * Checks order status from Cashfree and dynamic DB
+ * Checks order status from Cashfree and triggers DB confirmation, inner-join relations & curriculum initialization.
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -219,24 +232,21 @@ export async function GET(request: Request) {
   const dbOrder = await dbManager.commerce.getOrderById(orderId);
   const cfOrder = await cashfreeClient.getOrder(orderId);
 
-  // If Cashfree verifies that order is PAID but dynamic DB is not yet marked PAID:
+  // Check if Cashfree verifies that order is PAID or DB is marked PAID
   const isPaid = cfOrder.orderStatus === "PAID" || dbOrder?.status === "PAID";
-  if (cfOrder.orderStatus === "PAID" && dbOrder && dbOrder.status !== "PAID") {
-    await dbManager.commerce.updateOrderStatus(orderId, "PAID");
-    if (dbOrder.enrollmentId) {
-      await dbManager.commerce.updateEnrollmentStatus(dbOrder.enrollmentId, "ENROLLED");
-    }
-    await dbManager.commerce.upsertPayment({
-      id: `pay_${Date.now()}_sync`,
+  let joinedDetails = null;
+
+  if (isPaid) {
+    // Triggers payment storage, order confirmation, student enrollment, and course curriculum progress
+    joinedDetails = await dbManager.commerce.confirmOrderAndEnrollment({
       orderId,
-      gateway: "CASHFREE",
       gatewayOrderId: cfOrder.cfOrderId || orderId,
-      gatewayPaymentId: `cf_sync_${Date.now()}`,
+      paymentId: `cf_${Date.now()}`,
       paymentMethod: "UPI",
-      amountInPaise: Math.round(cfOrder.orderAmount * 100),
-      status: "SUCCESS",
-      paidAt: new Date(),
+      amountInPaise: Math.round((cfOrder.orderAmount || 4999) * 100),
     });
+  } else {
+    joinedDetails = await dbManager.commerce.getOrderWithJoinedDetails(orderId);
   }
 
   return NextResponse.json({
@@ -247,5 +257,6 @@ export async function GET(request: Request) {
     amount: cfOrder.orderAmount,
     currency: cfOrder.orderCurrency,
     isPaid,
+    joinedDetails,
   });
 }

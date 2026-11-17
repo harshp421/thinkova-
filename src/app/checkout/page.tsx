@@ -126,6 +126,7 @@ export default function CheckoutPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          studentId: effectiveStudentId,
           studentName,
           parentName: parentName || user.fullName,
           parentEmail: parentEmail || user.email,

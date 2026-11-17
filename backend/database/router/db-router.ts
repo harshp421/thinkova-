@@ -51,10 +51,10 @@ export class DatabaseRouter {
   /**
    * Automatically resolves driver implementations based on environment connection strings.
    */
-  private initDriversFromEnv() {
-    const defaultUri = process.env.DATABASE_URL || "";
-    const schoolsUri = process.env.SCHOOLS_DATABASE_URL || "";
-    const commerceUri = process.env.STUDENTS_COMMERCE_DATABASE_URL || "";
+  public initDriversFromEnv() {
+    const defaultUri = (process.env.DATABASE_URL || "").trim().replace(/^["']|["']$/g, "").trim();
+    const schoolsUri = (process.env.SCHOOLS_DATABASE_URL || "").trim().replace(/^["']|["']$/g, "").trim();
+    const commerceUri = (process.env.STUDENTS_COMMERCE_DATABASE_URL || "").trim().replace(/^["']|["']$/g, "").trim();
 
     // 1. Resolve and register driver for Schools domain
     if (schoolsUri) {
@@ -87,8 +87,9 @@ export class DatabaseRouter {
   /**
    * Factory that detects the database protocol and instantiates the proper driver.
    */
-  public createDriverFromUri(name: string, uri: string): IDatabaseDriver | null {
-    if (!uri) return null;
+  public createDriverFromUri(name: string, rawUri: string): IDatabaseDriver | null {
+    if (!rawUri) return null;
+    const uri = rawUri.trim().replace(/^["']|["']$/g, "").trim();
 
     if (uri.startsWith("postgres://") || uri.startsWith("postgresql://")) {
       return new PostgresDatabaseDriver(uri);
@@ -133,6 +134,12 @@ export class DatabaseRouter {
   public getDriverForDomain(domain: DomainPartition = "default"): IDatabaseDriver {
     let driverName = this.domainRoutes.get(domain) || this.domainRoutes.get("default") || this.config.defaultDriver;
 
+    // If still using default memory driver, check if environment variables are now populated
+    if (driverName === "memory" && (process.env.STUDENTS_COMMERCE_DATABASE_URL || process.env.SCHOOLS_DATABASE_URL)) {
+      this.initDriversFromEnv();
+      driverName = this.domainRoutes.get(domain) || this.domainRoutes.get("default") || this.config.defaultDriver;
+    }
+
     // Check circuit breaker status
     if (this.circuitBreakerTripped.get(driverName)) {
       if (this.config.fallbackToMemory) {
@@ -170,7 +177,11 @@ export class DatabaseRouter {
       }
 
       if (this.config.fallbackToMemory && primaryDriver !== this.fallbackDriver) {
-        console.warn(`[DatabaseRouter] Operation on '${primaryDriver.name}' failed. Falling back to in-memory store.`);
+        console.error(`[DatabaseRouter] ERROR on '${primaryDriver.name}' (${domain}):`, (err as Error)?.message || err);
+        if (err instanceof Error && err.stack) {
+          console.error(err.stack);
+        }
+        console.warn(`[DatabaseRouter] Falling back to in-memory store for domain '${domain}'.`);
         return await operation(this.fallbackDriver);
       }
 
