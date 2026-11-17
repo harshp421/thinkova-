@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { dbManager } from "@/../backend/database/client";
 
 interface TutorQuestion {
   id: string;
@@ -17,51 +18,126 @@ interface TutorQuestion {
   };
 }
 
-// In-memory store for tutor interactions
-const tutorQuestionsStore: TutorQuestion[] = [
-  {
-    id: "q-seed-1",
-    studentId: "aarav",
-    studentName: "Aarav Sharma",
-    lessonTitle: "Level 6 · Lesson 3: Connect the steps",
-    questionText: "How do I make sure the agent remembers what subject was mentioned in step 1 when it answers in step 2?",
-    attachmentName: "agent-draft.json",
-    status: "answered",
-    createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-    tutorReply: {
-      tutorName: "Ms Ananya Rao",
-      tutorRole: "AI & Robotics Mentor",
-      repliedAt: new Date(Date.now() - 3600000).toISOString(),
-      message: "Hi Aarav! In Lesson 3 at 04:10, we pass the memory state object across sequential steps. Make sure your step 2 function takes `context.previousTurn` as an argument before crafting its reply!",
-    },
-  },
-];
+// In-memory questions store (can be persisted to MongoDB Atlas)
+const tutorQuestionsStore: TutorQuestion[] = [];
 
 export async function GET(req: NextRequest) {
-  const studentId = req.nextUrl.searchParams.get("studentId") || "aarav";
-  const studentQuestions = tutorQuestionsStore.filter((q) => q.studentId === studentId);
+  try {
+    const isAll = req.nextUrl.searchParams.get("all") === "true";
+    const studentId = req.nextUrl.searchParams.get("studentId");
+    const courseId = req.nextUrl.searchParams.get("courseId");
 
-  return NextResponse.json({
-    success: true,
-    questions: studentQuestions,
-    tutor: {
-      name: "Ms Ananya Rao",
-      role: "Lead AI & Robotics Mentor",
-      school: "The Bishop's School Lab",
-      availability: "Replies within a few hours",
-      avatarUrl: "/images/auth-lab.jpg",
-    },
-  });
+    // Fetch tutor info dynamically from student's enrolled course / batch
+    let tutorInfo = {
+      name: "School STEM Mentor",
+      role: "Lead Lab Instructor",
+      school: "ThinkOva Partner School",
+      availability: "Replies during in-school lab hours",
+      avatarUrl: "/avatars/tutors/mentor.png",
+    };
+
+    if (studentId) {
+      const student = await dbManager.commerce.getStudentById(studentId);
+      if (student?.schoolName) {
+        tutorInfo.school = student.schoolName;
+      }
+      const enrollments = await dbManager.commerce.getEnrollmentsByStudentId(studentId);
+      const activeEnr = enrollments.find((e) => e.status === "ENROLLED") || enrollments[0];
+      if (activeEnr?.cohortBatchId) {
+        const batch = await dbManager.schools.getBatch(activeEnr.cohortBatchId);
+        if (batch?.tutorId) {
+          const tutor = await dbManager.schools.getTutor(batch.tutorId);
+          if (tutor) {
+            tutorInfo = {
+              name: tutor.fullName,
+              role: tutor.bio?.slice(0, 40) || "Lead Educator",
+              school: student?.schoolName || "ThinkOva Partner School",
+              availability: "Available during weekly lab session",
+              avatarUrl: tutor.photoUrl || "/avatars/tutors/mentor.png",
+            };
+          }
+        }
+      } else if (courseId || activeEnr?.courseId) {
+        const course = await dbManager.schools.getCourseById(courseId || activeEnr?.courseId || "");
+        if (course?.tutor) {
+          tutorInfo = {
+            name: course.tutor.name,
+            role: course.tutor.title || "Course Instructor",
+            school: student?.schoolName || "ThinkOva Partner School",
+            availability: "Replies within 24 hours",
+            avatarUrl: course.tutor.avatar || "/avatars/tutors/mentor.png",
+          };
+        }
+      }
+    }
+
+    const studentQuestions = isAll || !studentId
+      ? tutorQuestionsStore
+      : tutorQuestionsStore.filter((q) => q.studentId === studentId);
+
+    return NextResponse.json({
+      success: true,
+      questions: studentQuestions,
+      tutor: tutorInfo,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Internal server error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const studentId = String(body.studentId || "aarav");
-    const studentName = String(body.studentName || "Aarav Sharma");
-    const lessonTitle = String(body.lessonTitle || "Level 6 · Lesson 3: Connect the steps");
+
+    // Tutor reply action from Tutor Dashboard
+    if (body.action === "reply" && body.questionId) {
+      const q = tutorQuestionsStore.find((item) => item.id === body.questionId);
+      if (!q) {
+        return NextResponse.json({ error: "Question not found" }, { status: 404 });
+      }
+
+      const tutorName = String(body.tutorName || "Tutor").trim();
+      const tutorRole = String(body.tutorRole || "Lab Mentor").trim();
+      const message = String(body.message || "").trim();
+
+      if (!message) {
+        return NextResponse.json({ error: "Reply message cannot be empty." }, { status: 400 });
+      }
+
+      q.status = "answered";
+      q.tutorReply = {
+        tutorName,
+        tutorRole,
+        repliedAt: new Date().toISOString(),
+        message,
+      };
+
+      return NextResponse.json({
+        success: true,
+        message: "Reply sent to student portal.",
+        question: q,
+      });
+    }
+
+    const studentId = String(body.studentId || "").trim();
+    if (!studentId) {
+      return NextResponse.json(
+        { error: "Missing required studentId parameter." },
+        { status: 400 }
+      );
+    }
+
+    // Resolve real student name from MongoDB Atlas if not provided
+    let studentName = String(body.studentName || "").trim();
+    if (!studentName) {
+      const student = await dbManager.commerce.getStudentById(studentId);
+      studentName = student?.fullName || "Student";
+    }
+
+    const lessonTitle = String(body.lessonTitle || "Studio Lesson").trim();
     const questionText = String(body.questionText || "").trim();
-    const attachmentName = body.attachmentName ? String(body.attachmentName) : undefined;
+    const attachmentName = body.attachmentName ? String(body.attachmentName).trim() : undefined;
 
     if (!questionText) {
       return NextResponse.json(
@@ -72,14 +148,6 @@ export async function POST(req: NextRequest) {
 
     const newQuestionId = `tq-${Date.now()}`;
 
-    // Instant realistic tutor reply generation tailored to the student's question
-    let tutorResponse = "Hi Aarav! Great question. Make sure your step 1 output passes its structured JSON payload into step 2, and review the chapter at 04:10 in the lesson player!";
-    if (questionText.toLowerCase().includes("memory") || questionText.toLowerCase().includes("remember")) {
-      tutorResponse = "Hi Aarav! For agent memory, retain the subject in a `memory_context` variable. In your build task, test it with: 'My favorite planet is Saturn' followed by 'Which planet was that?'.";
-    } else if (questionText.toLowerCase().includes("safety") || questionText.toLowerCase().includes("protect")) {
-      tutorResponse = "Hi Aarav! Your safety check should intercept every reply. If user input asks for unsafe or unverified advice, the safety rule should prompt: 'I don't know that yet, let's ask your teacher.'";
-    }
-
     const questionEntry: TutorQuestion = {
       id: newQuestionId,
       studentId,
@@ -87,21 +155,15 @@ export async function POST(req: NextRequest) {
       lessonTitle,
       questionText,
       attachmentName,
-      status: "answered",
+      status: "submitted",
       createdAt: new Date().toISOString(),
-      tutorReply: {
-        tutorName: "Ms Ananya Rao",
-        tutorRole: "AI & Robotics Mentor",
-        repliedAt: new Date(Date.now() + 1000).toISOString(),
-        message: tutorResponse,
-      },
     };
 
     tutorQuestionsStore.unshift(questionEntry);
 
     return NextResponse.json({
       success: true,
-      message: "Question successfully delivered to Tutor Ms Ananya Rao. Notification sent.",
+      message: "Question successfully delivered to your mentor. Awaiting tutor reply.",
       notificationSent: true,
       question: questionEntry,
     });
@@ -110,4 +172,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
-

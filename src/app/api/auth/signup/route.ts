@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
 
     // Save to dynamic database layer
     await dbManager.commerce.upsertUser(user);
+    console.log(`[Auth Signup] User persisted to database: ${user.id} (${user.email})`);
 
     // Automation: Dispatch welcome email & optional WhatsApp confirmation
     try {

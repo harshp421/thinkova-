@@ -8,6 +8,18 @@ import { whatsappTemplates } from "../../../../../backend/templates/whatsapp-tem
 export const runtime = "nodejs";
 
 /**
+ * GET /api/cashfree/webhook
+ * Health check endpoint for Cashfree dashboard test ping and connectivity verification.
+ */
+export async function GET() {
+  return NextResponse.json({
+    status: "ok",
+    service: "ThinkOva Cashfree Webhook Listener",
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
  * POST /api/cashfree/webhook
  * Receives payment status webhooks from Cashfree, verifies signature, updates orders, and dispatches alerts.
  */
@@ -20,6 +32,11 @@ export async function POST(request: Request) {
     rawBody = await request.text();
   } catch {
     return NextResponse.json({ error: "Failed to read request payload" }, { status: 400 });
+  }
+
+  // Handle Cashfree dashboard setup test ping gracefully
+  if (!signature && (!rawBody || rawBody === "{}" || rawBody.toLowerCase().includes("test"))) {
+    return NextResponse.json({ status: "ok", message: "Cashfree test ping acknowledged" });
   }
 
   // 1. Verify Webhook Signature (Dynamic: enforces when credentials exist, allows test pings in simulation)
@@ -71,71 +88,64 @@ export async function POST(request: Request) {
     paymentStatus === "SUCCESS" ||
     paymentStatus === "PAID"
   ) {
-    // A. Update Order Status
-    await dbManager.commerce.updateOrderStatus(orderId, "PAID");
-
-    // B. Record Payment Transaction
-    await dbManager.commerce.upsertPayment({
-      id: `pay_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    // Confirm order, record payment, activate enrollment, and initialize curriculum milestones & progress
+    const joined = await dbManager.commerce.confirmOrderAndEnrollment({
       orderId,
-      gateway: "CASHFREE",
       gatewayOrderId: String(orderData?.cf_order_id || orderId),
-      gatewayPaymentId: paymentId,
-      paymentMethod: "UPI",
+      paymentId,
+      paymentMethod: (paymentData?.payment_group as any) || "UPI",
       amountInPaise: amountPaidInPaise,
-      status: "SUCCESS",
-      paidAt: new Date(),
     });
 
-    // C. Confirm Enrollment
-    if (enrollment) {
-      await dbManager.commerce.updateEnrollmentStatus(enrollment.id, "ENROLLED");
-    }
+    const enrolledUser = joined.user;
+    const enrolledStudent = joined.student;
+    const enrolledEnrollment = joined.enrollment;
+    const enrolledBatch = joined.batch;
+    const enrolledCourse = joined.course;
 
-    // D. Dispatch Confirmation Notifications
-    if (user && student && enrollment) {
-      const batch = await dbManager.schools.getBatch(enrollment.cohortBatchId);
-      const school = await dbManager.schools.findByUid(enrollment.schoolUid);
-      const tutor = batch ? await dbManager.schools.getTutor(batch.tutorId) : null;
+    // Dispatch Confirmation Notifications
+    if (enrolledUser && enrolledStudent && enrolledEnrollment) {
+      const school = await dbManager.schools.findByUid(enrolledEnrollment.schoolUid);
+      const tutor = enrolledBatch ? await dbManager.schools.getTutor(enrolledBatch.tutorId) : null;
 
       const email = emailTemplates.enrolmentSuccess({
-        parentName: user.username || "Parent",
-        studentName: student.fullName,
-        currentGrade: student.currentGrade,
-        schoolName: school?.officialName || enrollment.schoolUid,
-        batchSchedule: batch ? `${batch.dayOfWeek}s ${batch.startTime}` : "Weekly Lab Sessions",
+        parentName: enrolledUser.username || "Parent",
+        studentName: enrolledStudent.fullName,
+        currentGrade: enrolledStudent.currentGrade,
+        schoolName: school?.officialName || enrolledEnrollment.schoolUid,
+        batchSchedule: enrolledBatch ? `${enrolledBatch.dayOfWeek}s ${enrolledBatch.startTime}` : "Weekly Lab Sessions",
         tutorName: tutor?.fullName || "Lead AI Mentor",
         amountPaid: `₹${(amountPaidInPaise / 100).toLocaleString("en-IN")}`,
         orderId,
       });
 
       const wa = whatsappTemplates.enrolmentConfirmed({
-        parentPhone: user.phone,
-        parentName: user.username || "Parent",
-        studentName: student.fullName,
-        schoolName: school?.officialName || enrollment.schoolUid,
-        grade: student.currentGrade,
+        parentPhone: enrolledUser.phone,
+        parentName: enrolledUser.username || "Parent",
+        studentName: enrolledStudent.fullName,
+        schoolName: school?.officialName || enrolledEnrollment.schoolUid,
+        grade: enrolledStudent.currentGrade,
         orderId,
         amountPaid: `₹${(amountPaidInPaise / 100).toLocaleString("en-IN")}`,
-        startDate: batch ? `${batch.dayOfWeek}s ${batch.startTime}` : "Next Session",
+        startDate: enrolledBatch ? `${enrolledBatch.dayOfWeek}s ${enrolledBatch.startTime}` : "Next Session",
       });
 
-      // Dispatch Email via SMTP
+      // Dispatch Email via SMTP / Graph
       await defaultDispatcher.sendEmail({
-        to: user.email,
+        to: enrolledUser.email,
         subject: email.subject,
         html: email.html,
         text: email.text,
-        metadata: { orderId, eventType, gateway: "CASHFREE" },
+        metadata: { orderId, eventType, gateway: "CASHFREE", courseId: enrolledCourse?.id },
       });
 
       // Dispatch WhatsApp
       await defaultDispatcher.sendWhatsApp({
-        to: user.phone,
+        to: enrolledUser.phone,
         templateName: wa.templateName,
         fallbackText: wa.fallbackText,
         components: wa.components,
-        metadata: { orderId, eventType, gateway: "CASHFREE" },
+        metadata: { orderId, eventType, gateway: "CASHFREE", courseId: enrolledCourse?.id },
       });
 
       await dbManager.commerce.markAlertSent("ENROLMENT", orderId);
@@ -145,6 +155,8 @@ export async function POST(request: Request) {
       status: "success",
       event: "PAYMENT_CONFIRMED",
       orderId,
+      studentId: enrolledStudent?.id,
+      courseId: enrolledCourse?.id,
       processedAt: new Date().toISOString(),
     });
   }

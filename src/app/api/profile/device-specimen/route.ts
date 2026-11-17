@@ -31,7 +31,7 @@ export interface DeviceSpecimenTelemetry {
 
 export async function GET(req: NextRequest) {
   try {
-    const studentId = req.nextUrl.searchParams.get("studentId") || "aarav";
+    const studentId = req.nextUrl.searchParams.get("studentId") || "learner";
 
     const specimenData: DeviceSpecimenTelemetry = {
       studentId,

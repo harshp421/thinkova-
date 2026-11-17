@@ -8,6 +8,12 @@ import type {
   AssessmentEntity,
   CourseProgressEntity,
   LearningStateAnalysisEntity,
+  CourseEntity,
+  CohortBatchEntity,
+  CourseVideoEntity,
+  CourseWeeklyPlanItem,
+  CourseMilestone,
+  OrderWithFullDetails,
 } from "../types";
 import { PreSchemaValidator } from "../schema/validator";
 import { dbRouter, type DatabaseRouter } from "../router/db-router";
@@ -64,6 +70,9 @@ export interface ICommerceRepository {
   getStudentById(studentId: string): Promise<StudentEntity | null>;
   getStudentsByParentId(parentUserId: string): Promise<StudentEntity[]>;
   getEnrollmentsByStudentId(studentId: string): Promise<EnrollmentEntity[]>;
+  getEnrollmentsByBatchId(batchId: string): Promise<EnrollmentEntity[]>;
+  getAssessmentsByBatchId(batchId: string): Promise<AssessmentEntity[]>;
+  getAssessmentsByStudentId(studentId: string): Promise<AssessmentEntity[]>;
   deleteStudent(studentId: string): Promise<void>;
   upsertPayment(payment: PaymentEntity): Promise<void>;
   updateOrderStatus(orderId: string, status: OrderEntity["status"], failureReason?: string): Promise<void>;
@@ -85,6 +94,21 @@ export interface ICommerceRepository {
     progress: CourseProgressEntity;
     analysis: LearningStateAnalysisEntity;
     learningPortalUrl: string;
+  }>;
+  getPaymentByOrderId(orderId: string): Promise<PaymentEntity | null>;
+  getOrderWithJoinedDetails(orderId: string): Promise<OrderWithFullDetails | null>;
+  confirmOrderAndEnrollment(params: {
+    orderId: string;
+    paymentId?: string;
+    gatewayOrderId?: string;
+    paymentMethod?: string;
+    amountInPaise?: number;
+  }): Promise<OrderWithFullDetails>;
+  getSharedCurriculum(courseId: string, batchId?: string): Promise<{
+    course: CourseEntity | null;
+    batch: CohortBatchEntity | null;
+    weeklyPlan: CourseWeeklyPlanItem[];
+    videos: CourseVideoEntity[];
   }>;
 }
 
@@ -329,6 +353,18 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
     return await this.router.find<EnrollmentEntity>("enrollments", { studentId }, undefined, "commerce");
   }
 
+  async getEnrollmentsByBatchId(batchId: string): Promise<EnrollmentEntity[]> {
+    return await this.router.find<EnrollmentEntity>("enrollments", { cohortBatchId: batchId }, undefined, "commerce");
+  }
+
+  async getAssessmentsByBatchId(batchId: string): Promise<AssessmentEntity[]> {
+    return await this.router.find<AssessmentEntity>("assessments", { cohortBatchId: batchId }, undefined, "commerce");
+  }
+
+  async getAssessmentsByStudentId(studentId: string): Promise<AssessmentEntity[]> {
+    return await this.router.find<AssessmentEntity>("assessments", { studentId }, undefined, "commerce");
+  }
+
   async deleteStudent(studentId: string): Promise<void> {
     await this.router.delete("students", studentId, "commerce");
   }
@@ -402,72 +438,40 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
     });
     await this.upsertEnrollment(enrollment);
 
-    // Initial Milestones for Course (starts at Level 1 with 0 completed milestones for new learners)
-    const defaultMilestones = [
-      {
-        id: "m_1",
-        weekNumber: 1,
-        title: "Lab Orientation & Circuit / Prompt Setup",
-        summary: "Introduction to hardware kit and bot development environment.",
-        completed: false,
-      },
-      {
-        id: "m_2",
-        weekNumber: 2,
-        title: "Sensory Input & Conversation Flow Nodes",
-        summary: "Wiring input transducers or programming branching response logic.",
-        completed: false,
-      },
-      {
-        id: "m_3",
-        weekNumber: 3,
-        title: "Autonomous Decision Rules & Feedback Loops",
-        summary: "State machine logic and ultrasonic/agent error handling.",
-        completed: false,
-      },
-      {
-        id: "m_4",
-        weekNumber: 4,
-        title: "Telemetry & Multi-Turn State Retention",
-        summary: "Variables, persistent memory, and live telemetry readout.",
-        completed: false,
-      },
-      {
-        id: "m_5",
-        weekNumber: 5,
-        title: "Fail-Safe Hardening & Stress Testing",
-        summary: "Boundary testing, obstacle recovery, and edge-case prompt guards.",
-        completed: false,
-      },
-      {
-        id: "m_6",
-        weekNumber: 6,
-        title: "School Demo Day Presentation & Live Defense",
-        summary: "Showcase working robot/agent live in front of tutors and parents.",
-        completed: false,
-      },
-    ];
+    // Fetch real course curriculum from thinkova_schools.courses
+    const course = await this.router.get<CourseEntity>("courses", payload.courseId, "schools");
+    const milestones: CourseMilestone[] = (course?.weeklyPlan && course.weeklyPlan.length > 0)
+      ? course.weeklyPlan.map((wp) => ({
+          id: `m_${wp.week}`,
+          weekNumber: wp.week,
+          title: wp.title,
+          summary: wp.subtitle,
+          completed: false,
+          videoUrl: wp.videoUrl || undefined,
+        }))
+      : [];
 
+    const totalWeeks = milestones.length > 0 ? milestones.length : (course?.weeklyPlan?.length || 6);
     const progressId = `prog_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const progress = await this.upsertCourseProgress({
       id: progressId,
       studentId: payload.studentId,
       courseId: payload.courseId,
-      courseTitle: payload.courseTitle,
-      trackId: payload.trackId,
+      courseTitle: course?.title || payload.courseTitle,
+      trackId: course?.trackId || payload.trackId,
       enrollmentId: enrollment.id,
       parentUserId: payload.parentUserId,
       status: "ACTIVE",
       currentWeek: 1,
-      totalWeeks: 6,
+      totalWeeks,
       frequencyPerWeek: 1,
       frequencyLabel: "1 live in-school lab/week + 90 min guided sandbox",
       completedMinutes: 0,
-      totalEstimatedMinutes: 540,
-      lengthLeftMinutes: 540,
+      totalEstimatedMinutes: totalWeeks * 90,
+      lengthLeftMinutes: totalWeeks * 90,
       completionPercentage: 0,
-      persona: payload.trackId === "robotics" ? "BUILDER" : payload.trackId === "ai" ? "LOGICIAN" : "CREATOR",
-      milestones: defaultMilestones,
+      persona: (course?.trackId || payload.trackId) === "robotics" ? "BUILDER" : (course?.trackId || payload.trackId) === "ai" ? "LOGICIAN" : "CREATOR",
+      milestones,
       streakDays: 0,
       lastActiveAt: new Date(),
       nextSessionAt: new Date(Date.now() + 7 * 86400000),
@@ -539,6 +543,205 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
       progress,
       analysis,
       learningPortalUrl,
+    };
+  }
+
+  async getPaymentByOrderId(orderId: string): Promise<PaymentEntity | null> {
+    const list = await this.router.find<PaymentEntity>(
+      "payments",
+      { orderId },
+      { sort: { paidAt: "desc" }, limit: 1 },
+      "commerce"
+    );
+    return list[0] || null;
+  }
+
+  async getOrderWithJoinedDetails(orderId: string): Promise<OrderWithFullDetails | null> {
+    const order = await this.getOrderById(orderId);
+    if (!order) return null;
+
+    const [payment, enrollment, user] = await Promise.all([
+      this.getPaymentByOrderId(orderId),
+      this.getEnrollmentById(order.enrollmentId),
+      this.getUserById(order.userId),
+    ]);
+
+    if (!enrollment || !user) return null;
+
+    const student = await this.getStudentById(enrollment.studentId);
+    if (!student) return null;
+
+    let course: CourseEntity | null = null;
+    if (enrollment.courseId) {
+      course = await this.router.get<CourseEntity>("courses", enrollment.courseId, "schools");
+    }
+
+    let batch: CohortBatchEntity | null = null;
+    if (enrollment.cohortBatchId) {
+      batch = await this.router.get<CohortBatchEntity>("batches", enrollment.cohortBatchId, "schools");
+    }
+
+    return {
+      order,
+      payment,
+      enrollment,
+      student,
+      user,
+      course,
+      batch,
+    };
+  }
+
+  async confirmOrderAndEnrollment(params: {
+    orderId: string;
+    paymentId?: string;
+    gatewayOrderId?: string;
+    paymentMethod?: string;
+    amountInPaise?: number;
+  }): Promise<OrderWithFullDetails> {
+    const order = await this.getOrderById(params.orderId);
+    if (!order) {
+      throw new Error(`Order ${params.orderId} not found in database.`);
+    }
+
+    // 1. Mark Order as PAID
+    await this.updateOrderStatus(params.orderId, "PAID");
+
+    // 2. Persist Payment Transaction in thinkova_commerce.payments
+    const existingPayment = await this.getPaymentByOrderId(params.orderId);
+    if (!existingPayment) {
+      const paymentDoc: PaymentEntity = {
+        id: `pay_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        orderId: params.orderId,
+        gateway: "CASHFREE",
+        gatewayOrderId: params.gatewayOrderId || params.orderId,
+        gatewayPaymentId: params.paymentId || `cf_${Date.now()}`,
+        paymentMethod: (params.paymentMethod as PaymentEntity["paymentMethod"]) || "UPI",
+        amountInPaise: params.amountInPaise || order.amountInPaise,
+        status: "SUCCESS",
+        paidAt: new Date(),
+      };
+      await this.upsertPayment(paymentDoc);
+    }
+
+    // 3. Confirm Enrollment (update status to ENROLLED)
+    const enrollment = await this.getEnrollmentById(order.enrollmentId);
+    if (!enrollment) {
+      throw new Error(`Enrollment ${order.enrollmentId} not found for order ${params.orderId}.`);
+    }
+    await this.updateEnrollmentStatus(enrollment.id, "ENROLLED");
+
+    // 4. Resolve Course details from thinkova_schools.courses
+    const courseId = enrollment.courseId;
+    let course: CourseEntity | null = null;
+    if (courseId) {
+      course = await this.router.get<CourseEntity>("courses", courseId, "schools");
+    }
+
+    // 5. Trigger Curriculum, Learnings, Steps & Videos initialization in thinkova_commerce.course_progress
+    const student = await this.getStudentById(enrollment.studentId);
+    const resolvedCourseId = courseId || course?.id || "course";
+    const existingProgress = await this.getCourseProgressByStudent(enrollment.studentId, resolvedCourseId);
+    if (!existingProgress) {
+      // Build real milestones directly from course weekly plan in MongoDB Atlas
+      const milestones: CourseMilestone[] = (course?.weeklyPlan || []).map((wp) => ({
+        id: `m_${wp.week}`,
+        weekNumber: wp.week,
+        title: wp.title,
+        summary: wp.subtitle,
+        completed: false,
+        videoUrl: wp.videoUrl || undefined,
+      }));
+
+      const totalWeeks = milestones.length > 0 ? milestones.length : (course?.weeklyPlan?.length || 6);
+      const progressId = `prog_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      await this.upsertCourseProgress({
+        id: progressId,
+        studentId: enrollment.studentId,
+        courseId: resolvedCourseId,
+        courseTitle: course?.title || "Enrolled Course",
+        trackId: course?.trackId || student?.preferredTrack || "general",
+        enrollmentId: enrollment.id,
+        parentUserId: order.userId,
+        status: "ACTIVE",
+        currentWeek: 1,
+        totalWeeks,
+        frequencyPerWeek: 1,
+        frequencyLabel: "1 in-school lab/week + 90 min guided sandbox",
+        completedMinutes: 0,
+        totalEstimatedMinutes: totalWeeks * 90,
+        lengthLeftMinutes: totalWeeks * 90,
+        completionPercentage: 0,
+        persona: (course?.trackId || student?.preferredTrack) === "robotics" ? "BUILDER" : (course?.trackId || student?.preferredTrack) === "ai" ? "LOGICIAN" : "CREATOR",
+        milestones,
+        streakDays: 1,
+        lastActiveAt: new Date(),
+        nextSessionAt: new Date(Date.now() + 7 * 86400000),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      // Initialize learning analysis
+      await this.saveLearningAnalysis({
+        id: `ana_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        studentId: enrollment.studentId,
+        courseId: resolvedCourseId,
+        persona: (course?.trackId || student?.preferredTrack) === "robotics" ? "BUILDER" : (course?.trackId || student?.preferredTrack) === "ai" ? "LOGICIAN" : "CREATOR",
+        frequencyScore: 100,
+        completionVelocity: 1.0,
+        lengthLeftWeeks: milestones.length,
+        projectedDemoDay: new Date(Date.now() + milestones.length * 7 * 86400000),
+        followRoute: "STANDARD",
+        strengths: ["Course Enrolled", "In-School Lab Access Enabled", "Active Mentorship"],
+        areasOfGrowth: ["Begin Level 1 Orientation"],
+        recommendedNextTrack: "ai",
+        parentReportPill: `Enrolment confirmed · Level 1 ready for ${student?.fullName || "student"}`,
+        analyzedAt: new Date(),
+      });
+    }
+
+    const fullDetails = await this.getOrderWithJoinedDetails(params.orderId);
+    if (!fullDetails) {
+      throw new Error(`Failed to retrieve joined details for order ${params.orderId}.`);
+    }
+    return fullDetails;
+  }
+
+  async getSharedCurriculum(courseId: string, batchId?: string): Promise<{
+    course: CourseEntity | null;
+    batch: CohortBatchEntity | null;
+    weeklyPlan: CourseWeeklyPlanItem[];
+    videos: CourseVideoEntity[];
+  }> {
+    const course = await this.router.get<CourseEntity>("courses", courseId, "schools");
+    let batch: CohortBatchEntity | null = null;
+    if (batchId) {
+      batch = await this.router.get<CohortBatchEntity>("batches", batchId, "schools");
+    }
+
+    const videos = await this.router.find<CourseVideoEntity>(
+      "course_videos",
+      batchId ? { courseId, batchId } : { courseId },
+      { sort: { weekNumber: "asc" } },
+      "schools"
+    );
+
+    // Merge real videos into weeklyPlan
+    const basePlan = course?.weeklyPlan || [];
+    const mergedPlan: CourseWeeklyPlanItem[] = basePlan.map((wp) => {
+      const matchingVideo = videos.find((v) => v.weekNumber === wp.week);
+      return {
+        ...wp,
+        videoUrl: matchingVideo?.videoUrl || wp.videoUrl,
+        recordingDuration: matchingVideo?.duration || wp.recordingDuration,
+      };
+    });
+
+    return {
+      course,
+      batch,
+      weeklyPlan: mergedPlan,
+      videos,
     };
   }
 }

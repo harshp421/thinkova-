@@ -125,48 +125,15 @@ export const REPLAY_ITEMS: ReplayItem[] = [
   {
     id: "rep-1",
     title: "Level 6: Build your first guided agent",
-    subtitle: "Thu 5 Nov · watched",
-    videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ",
+    subtitle: "Thu 5 Nov · In-School Studio Session",
+    videoUrl: undefined,
   },
   {
     id: "rep-2",
     title: "Level 5: Agent blueprint",
-    subtitle: "Thu 29 Oct · watched",
-    videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ",
+    subtitle: "Thu 29 Oct · In-School Studio Session",
+    videoUrl: undefined,
   },
 ];
 
-export const PAST_RECORDINGS: LiveClassSession[] = [
-  {
-    id: "rec-session-w6",
-    levelNumber: 6,
-    title: "Level 6: Build your first guided agent",
-    topicDescription: "Thu 5 Nov · watched",
-    dateDisplay: "Thu 5 Nov",
-    timeDisplay: "Recorded · 55 min",
-    durationMinutes: 55,
-    tutorName: "Ms Ananya",
-    tutorRole: "Lead AI Educator",
-    tutorAvatar: "AR",
-    status: "COMPLETED",
-    recordingUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ",
-    recordingDuration: "55 min",
-    prepNotes: ["Level 6 agent verified"],
-  },
-  {
-    id: "rec-session-w5",
-    levelNumber: 5,
-    title: "Level 5: Agent blueprint",
-    topicDescription: "Thu 29 Oct · watched",
-    dateDisplay: "Thu 29 Oct",
-    timeDisplay: "Recorded · 58 min",
-    durationMinutes: 58,
-    tutorName: "Ms Ananya",
-    tutorRole: "Lead AI Educator",
-    tutorAvatar: "AR",
-    status: "COMPLETED",
-    recordingUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ",
-    recordingDuration: "58 min",
-    prepNotes: ["Worksheet completed", "Blueprint approved"],
-  },
-];
+export const PAST_RECORDINGS: LiveClassSession[] = [];

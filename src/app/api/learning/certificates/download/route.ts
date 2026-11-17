@@ -3,9 +3,9 @@ import { getStudentProgressData } from "@/data/progress-data";
 
 export async function GET(req: NextRequest) {
   try {
-    const studentId = req.nextUrl.searchParams.get("studentId") || "aarav";
+    const studentId = req.nextUrl.searchParams.get("studentId") || "learner";
     const courseId = req.nextUrl.searchParams.get("courseId") || "ai-for-young-creators";
-    const studentName = req.nextUrl.searchParams.get("studentName") || "Aarav Sharma";
+    const studentName = req.nextUrl.searchParams.get("studentName") || "Learner";
 
     const data = getStudentProgressData(studentId, courseId, studentName);
     const cert = data.certificate;

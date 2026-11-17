@@ -105,6 +105,8 @@ export class MemoryDatabaseDriver implements IDatabaseDriver {
               if (expObj.$lte !== undefined && !((actual as number) <= (expObj.$lte as number))) matches = false;
               if (expObj.$ne !== undefined && actual === expObj.$ne) matches = false;
               if (Array.isArray(expObj.$in) && !expObj.$in.includes(actual)) matches = false;
+            } else if (Array.isArray(actual)) {
+              if (!actual.includes(expected)) matches = false;
             } else if (actual !== expected) {
               matches = false;
             }

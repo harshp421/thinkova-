@@ -1,12 +1,14 @@
 import type {
   AssessmentEntity,
   CohortBatchEntity,
+  CourseEntity,
   EnrollmentEntity,
   OrderEntity,
   PaymentEntity,
   RefundEntity,
   SchoolEntity,
   StudentEntity,
+  TrackEntity,
   TutorEntity,
   UserEntity,
 } from "./types";
@@ -68,6 +70,14 @@ class MemoryProxyStore {
     return this.getCollectionMap<TutorEntity>("tutors");
   }
 
+  public get courses(): Map<string, CourseEntity> {
+    return this.getCollectionMap<CourseEntity>("courses");
+  }
+
+  public get tracks(): Map<string, TrackEntity> {
+    return this.getCollectionMap<TrackEntity>("tracks");
+  }
+
   public get users(): Map<string, UserEntity> {
     return this.getCollectionMap<UserEntity>("users");
   }
@@ -123,20 +133,27 @@ export class DynamicDatabaseManager {
    */
   public getDatabaseStatus() {
     const telemetry = this.router.getRouterTelemetry();
-    const isSchoolsPostgres = Boolean(process.env.SCHOOLS_DATABASE_URL);
-    const isCommercePostgres = Boolean(process.env.STUDENTS_COMMERCE_DATABASE_URL);
+    const isSchoolsConfigured = Boolean(process.env.SCHOOLS_DATABASE_URL);
+    const isCommerceConfigured = Boolean(process.env.STUDENTS_COMMERCE_DATABASE_URL);
+
+    const activeDrivers = Object.values(telemetry.drivers || {}).map((d) => d.dialect);
+    const driverLabel = activeDrivers.length > 0 
+      ? activeDrivers.map((d) => d.toUpperCase()).join(" / ") + " (Managed Connection)" 
+      : "Dynamic Universal Adapter (Memory)";
 
     return {
       status: "STABILIZED",
       architecture: "Pre-High Stable Database Router with Pre-Schema Normalization",
-      schoolsDbConfigured: isSchoolsPostgres,
-      commerceDbConfigured: isCommercePostgres,
-      activeDriver: isSchoolsPostgres || isCommercePostgres ? "PostgreSQL (Managed Connection Pool)" : "Dynamic Universal Adapter (Memory)",
+      schoolsDbConfigured: isSchoolsConfigured,
+      commerceDbConfigured: isCommerceConfigured,
+      activeDriver: driverLabel,
       telemetry,
       activeEntities: {
         schools: this.memory.schools.size,
         batches: this.memory.batches.size,
         tutors: this.memory.tutors.size,
+        courses: this.memory.courses.size,
+        tracks: this.memory.tracks.size,
         users: this.memory.users.size,
         students: this.memory.students.size,
         orders: this.memory.orders.size,

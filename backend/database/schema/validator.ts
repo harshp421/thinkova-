@@ -2,6 +2,8 @@ import type {
   SchoolEntity,
   TutorEntity,
   CohortBatchEntity,
+  CourseEntity,
+  TrackEntity,
   UserEntity,
   StudentEntity,
   EnrollmentEntity,
@@ -186,6 +188,7 @@ export class PreSchemaValidator {
       id: String(data.id),
       studentId,
       cohortBatchId,
+      courseId: data.courseId ? String(data.courseId) : undefined,
       schoolUid,
       paymentPlan: (data.paymentPlan || "FULL") as EnrollmentEntity["paymentPlan"],
       status: (data.status || "PENDING_PAYMENT") as EnrollmentEntity["status"],
@@ -346,6 +349,78 @@ export class PreSchemaValidator {
       recommendedNextTrack: data.recommendedNextTrack,
       parentReportPill: data.parentReportPill || "Ahead of syllabus · Ready for Demo Day test 2",
       analyzedAt: this.toDate(data.analyzedAt || new Date(), "LearningAnalysis", "analyzedAt"),
+    };
+  }
+
+  // 12. Course Entity Normalization
+  public static normalizeCourse(data: Partial<CourseEntity>): CourseEntity {
+    if (!data.id) throw new PreSchemaValidationError("Course", "Missing required id", "id");
+    const id = this.toNonEmptyString(data.id, "Course", "id").toLowerCase();
+    const title = this.toNonEmptyString(data.title, "Course", "title");
+    const trackId = this.toNonEmptyString(data.trackId, "Course", "trackId").toLowerCase();
+    const trackName = this.toNonEmptyString(data.trackName, "Course", "trackName");
+    const minGrade = Number(data.minGrade ?? 5);
+    const maxGrade = Number(data.maxGrade ?? 11);
+
+    const targetGrades = Array.isArray(data.targetGrades) && data.targetGrades.length > 0
+      ? data.targetGrades.map((g) => Number(g))
+      : Array.from({ length: maxGrade - minGrade + 1 }, (_, i) => minGrade + i);
+
+    return {
+      id,
+      title,
+      trackId,
+      trackName,
+      grades: data.grades || `Grades ${minGrade}–${maxGrade}`,
+      minGrade,
+      maxGrade,
+      targetGrades,
+      duration: data.duration || "6 weeks",
+      price: Number(data.price || 4999),
+      priceFormatted: data.priceFormatted || `₹${Number(data.price || 4999).toLocaleString("en-IN")}`,
+      twoPartsPriceFormatted: data.twoPartsPriceFormatted || `₹${(Number(data.price || 4999) + 500).toLocaleString("en-IN")}`,
+      firstPartFormatted: data.firstPartFormatted || `₹${Math.round(Number(data.price || 4999) / 2).toLocaleString("en-IN")}`,
+      secondPartFormatted: data.secondPartFormatted || `₹${Math.round(Number(data.price || 4999) / 2).toLocaleString("en-IN")}`,
+      nextBatch: data.nextBatch || "Starts Next Batch",
+      summary: data.summary || "",
+      whatTheyBuild: data.whatTheyBuild || "",
+      image: data.image || "/images/tracks-ai.png",
+      heroImage: data.heroImage,
+      popularTag: data.popularTag,
+      kitIncluded: Boolean(data.kitIncluded),
+      classSchedule: data.classSchedule || "90-min class, Saturdays",
+      location: data.location || "Partner School Lab",
+      seatsLeft: Number(data.seatsLeft ?? 10),
+      demoDayPromise: data.demoDayPromise,
+      demoDayTests: Array.isArray(data.demoDayTests) ? data.demoDayTests : undefined,
+      tutor: data.tutor,
+      weeklyPlan: Array.isArray(data.weeklyPlan) ? data.weeklyPlan : undefined,
+      status: (data.status || "ACTIVE") as CourseEntity["status"],
+      createdAt: this.toDate(data.createdAt || new Date(), "Course", "createdAt"),
+      updatedAt: data.updatedAt ? this.toDate(data.updatedAt, "Course", "updatedAt") : new Date(),
+    };
+  }
+
+  // 13. Track Entity Normalization
+  public static normalizeTrack(data: Partial<TrackEntity>): TrackEntity {
+    if (!data.id) throw new PreSchemaValidationError("Track", "Missing required id", "id");
+    const id = this.toNonEmptyString(data.id, "Track", "id").toLowerCase();
+    const name = this.toNonEmptyString(data.name, "Track", "name");
+
+    return {
+      id,
+      name,
+      slug: data.slug || id,
+      filterLabel: data.filterLabel || name,
+      tagline: data.tagline || "",
+      description: data.description || "",
+      priceRange: data.priceRange || "₹4,999",
+      minPrice: Number(data.minPrice || 4999),
+      gradeRange: data.gradeRange || "Grades 5–11",
+      image: data.image || "/images/tracks-ai.png",
+      courseIds: Array.isArray(data.courseIds) ? data.courseIds : [],
+      status: (data.status || "ACTIVE") as TrackEntity["status"],
+      createdAt: this.toDate(data.createdAt || new Date(), "Track", "createdAt"),
     };
   }
 }

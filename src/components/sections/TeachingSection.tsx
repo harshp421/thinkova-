@@ -285,14 +285,26 @@ export function TeachingSection() {
                 <X className="size-4" />
               </button>
             </div>
-            <div className="relative aspect-video w-full bg-black">
-              <iframe
-                src={siteConfig.classVideoUrl || "https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1"}
-                title="ThinkOva Real Class Demo"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                className="h-full w-full border-0"
-              />
+            <div className="relative aspect-video w-full bg-black flex items-center justify-center">
+              {siteConfig.classVideoUrl ? (
+                <iframe
+                  src={siteConfig.classVideoUrl}
+                  title="ThinkOva Real Class Demo"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  className="h-full w-full border-0"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center p-8 text-center text-white/80">
+                  <div className="size-12 rounded-2xl bg-white/10 flex items-center justify-center mb-3 text-[#FF6B2C]">
+                    <span className="text-xl">📹</span>
+                  </div>
+                  <h4 className="font-semibold text-lg text-white">Live Classroom Recording Coming Soon</h4>
+                  <p className="mt-1 text-sm text-white/60 max-w-sm">
+                    Live classroom recordings are uploaded by school mentors following weekly studio sessions.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>

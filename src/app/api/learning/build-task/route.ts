@@ -9,8 +9,8 @@ import {
 const submissionsStore: Record<string, BuildSubmissionRecord> = {};
 
 export async function GET(req: NextRequest) {
-  const studentId = req.nextUrl.searchParams.get("studentId") || "aarav";
-  const taskId = req.nextUrl.searchParams.get("taskId") || "level-6-memory";
+  const studentId = req.nextUrl.searchParams.get("studentId") || "learner";
+  const taskId = req.nextUrl.searchParams.get("taskId") || "level-1-problem-map";
 
   const taskDef = TASK_DEFINITIONS[taskId] || TASK_DEFINITIONS["level-6-memory"]!;
   const key = `${studentId}:${taskId}`;
@@ -37,8 +37,8 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const action = body.action || "save_draft"; // "save_draft" | "submit_build" | "review"
-    const studentId = String(body.studentId || "aarav");
-    const taskId = String(body.taskId || "level-6-memory");
+    const studentId = String(body.studentId || "learner");
+    const taskId = String(body.taskId || "level-1-problem-map");
     const taskDef = TASK_DEFINITIONS[taskId] || TASK_DEFINITIONS["level-6-memory"]!;
     const key = `${studentId}:${taskId}`;
 
