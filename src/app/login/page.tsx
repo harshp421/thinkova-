@@ -1,16 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Loader2, ShieldCheck } from "lucide-react";
 import { Logo } from "@/components/ui/Logo";
 import { LoadingSessionOverlay } from "@/components/ui/LoadingSessionOverlay";
 import { useAuth } from "@/lib/auth-context";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectParam = searchParams.get("redirect");
+  const roleParam = searchParams.get("role");
+  const errorParam = searchParams.get("error");
   const { login, loginWithGoogle } = useAuth();
 
   const [email, setEmail] = useState("");
@@ -19,6 +23,16 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showSignupPrompt, setShowSignupPrompt] = useState(false);
+
+  const isTutorRequested = roleParam === "tutor" || errorParam === "tutor_only";
+
+  const handleSuccessfulAuth = (defaultRedirect: string) => {
+    if (redirectParam && redirectParam.startsWith("/") && !redirectParam.startsWith("//")) {
+      router.push(redirectParam);
+    } else {
+      router.push(defaultRedirect || "/who-is-learning");
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,7 +50,7 @@ export default function LoginPage() {
     setIsLoading(false);
 
     if (result.success) {
-      router.push(result.redirectTo || "/who-is-learning");
+      handleSuccessfulAuth(result.redirectTo);
     } else {
       const err = result.error || "Login failed. Please check your credentials.";
       setErrorMessage(err);
@@ -54,7 +68,7 @@ export default function LoginPage() {
     setIsLoading(false);
 
     if (result.success) {
-      router.push(result.redirectTo || "/who-is-learning");
+      handleSuccessfulAuth(result.redirectTo);
     } else {
       setErrorMessage(result.error || "Google sign-in could not be completed.");
     }
@@ -126,8 +140,19 @@ export default function LoginPage() {
             Welcome back
           </h1>
           <p className="mt-1.5 text-sm leading-[22px] text-[#667085]">
-            Parents manage the account. Children pick their profile next.
+            {isTutorRequested
+              ? "Tutors access cohort rosters, assessments, and lab schedules."
+              : "Parents manage the account. Children pick their profile next."}
           </p>
+
+          {isTutorRequested && (
+            <div className="mt-4 flex items-center gap-2.5 rounded-2xl border border-indigo-200/80 bg-indigo-50/80 p-3.5 text-xs text-indigo-900 shadow-sm">
+              <ShieldCheck className="size-4 shrink-0 text-indigo-600" />
+              <span>
+                <strong>Tutor Portal:</strong> Please sign in with your ThinkOva Instructor credentials to access class rosters and evaluations.
+              </span>
+            </div>
+          )}
 
           {errorMessage && (
             <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-xs sm:text-sm text-red-800 shadow-sm">
@@ -161,7 +186,7 @@ export default function LoginPage() {
                 type="text"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="priya.sharma@gmail.com"
+                placeholder={isTutorRequested ? "rohit.tutor@thinkova.ai" : "priya.sharma@gmail.com"}
                 required
                 className="w-full rounded-xl border border-[#DCD8CF] bg-white px-4 py-3 text-sm text-[#0B0C0F] placeholder-[#8F94A0] shadow-sm outline-none transition focus:border-[#FF6026] focus:ring-2 focus:ring-[#FF6026]/15"
               />
@@ -247,5 +272,13 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#F8F7F4]" />}>
+      <LoginForm />
+    </Suspense>
   );
 }

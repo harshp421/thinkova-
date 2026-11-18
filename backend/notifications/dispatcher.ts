@@ -1,5 +1,6 @@
 import { graphMailer } from "./graph-mailer";
 import { openwaClient } from "./openwa";
+import { smtpMailer } from "./smtp";
 
 /**
  * Unified Dispatcher & Outbox Ledger for Emails and WhatsApp Messages
@@ -77,8 +78,31 @@ export class NotificationDispatcher {
         record.status = "FAILED";
         record.metadata = { ...record.metadata, transport: "MICROSOFT_GRAPH", error: errorMsg };
       }
+    } else if (smtpMailer.isConfigured()) {
+      // 2. SMTP Transport (Zoho / Custom SMTP client)
+      try {
+        const info = await smtpMailer.sendMail({
+          to: payload.to,
+          subject: payload.subject,
+          html: payload.html,
+          text: payload.text,
+        });
+
+        record.metadata = {
+          ...record.metadata,
+          transport: "SMTP",
+          messageId: info.messageId,
+          deliveredLive: true,
+        };
+        console.info(`[Dispatcher] Live email dispatched via SMTP to ${payload.to} (MessageID: ${info.messageId})`);
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[Dispatcher] SMTP dispatch error to ${payload.to}:`, errorMsg);
+        record.status = "FAILED";
+        record.metadata = { ...record.metadata, transport: "SMTP", error: errorMsg };
+      }
     } else if (process.env.RESEND_API_KEY) {
-      // 2. Fallback to Resend HTTP API if configured:
+      // 3. Fallback to Resend HTTP API if configured:
       try {
         const fromAddress = process.env.RESEND_FROM_EMAIL || "Thinkova <info@thinkova.ai>";
         const res = await fetch("https://api.resend.com/emails", {

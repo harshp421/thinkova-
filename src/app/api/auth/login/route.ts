@@ -29,9 +29,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check for saved students
-    const students = await dbManager.commerce.getStudentsByParentId(user.id);
-    const redirectTo = students.length > 0 ? "/who-is-learning" : "/tell-us-child";
+    // Resolve appropriate redirect path based on user role and onboarding status
+    let redirectTo = "/who-is-learning";
+    if (user.role === "TUTOR" || user.role === "SUPER_ADMIN") {
+      redirectTo = "/tutor";
+    } else {
+      const students = await dbManager.commerce.getStudentsByParentId(user.id);
+      redirectTo = students.length > 0 ? "/who-is-learning" : "/tell-us-child";
+    }
+
+    const students = user.role === "PARENT"
+      ? await dbManager.commerce.getStudentsByParentId(user.id)
+      : [];
 
     const token = await createSessionToken({
       userId: user.id,
