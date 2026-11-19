@@ -128,6 +128,10 @@ export class DatabaseRouter {
     this.domainRoutes.set(domain, driverName);
   }
 
+  public getDriver(name: string): IDatabaseDriver | undefined {
+    return this.drivers.get(name);
+  }
+
   /**
    * Resolves the active driver for a given domain with circuit-breaker protection.
    */
@@ -166,6 +170,18 @@ export class DatabaseRouter {
       this.failureCounts.set(primaryDriver.name, 0);
       return result;
     } catch (err: unknown) {
+      // Client/Schema constraint violations (e.g. MongoDB E11000 duplicate key) are not driver outages.
+      // Re-throw immediately without tripping circuit breaker or falling back to memory.
+      const isConstraintError =
+        (err as { code?: number })?.code === 11000 ||
+        (err as Error)?.message?.includes("E11000 duplicate key") ||
+        (err as Error)?.message?.includes("duplicate key error") ||
+        (err as Error)?.message?.includes("unique constraint");
+
+      if (isConstraintError) {
+        throw err;
+      }
+
       const failures = (this.failureCounts.get(primaryDriver.name) || 0) + 1;
       this.failureCounts.set(primaryDriver.name, failures);
 

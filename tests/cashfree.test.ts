@@ -104,12 +104,12 @@ describe("Cashfree Payment Gateway Integration", () => {
     );
   });
 
-  it("4. Verifies HMAC-SHA256 signature accurately and rejects tampered data", () => {
+  it("4. Verifies HMAC-SHA256 signature accurately and rejects tampered data and replay attacks", () => {
     const secret = "test_cashfree_secret_key";
     process.env.CASHFREE_SECRET_KEY = secret;
     const client = new CashfreeClient();
 
-    const timestamp = "1730700000";
+    const timestamp = Math.floor(Date.now() / 1000).toString();
     const rawBody = JSON.stringify({ type: "PAYMENT_SUCCESS_WEBHOOK", data: { order_id: "ord_101" } });
 
     const validSignature = crypto
@@ -122,6 +122,14 @@ describe("Cashfree Payment Gateway Integration", () => {
     // Tampered payload
     const tamperedBody = JSON.stringify({ type: "PAYMENT_SUCCESS_WEBHOOK", data: { order_id: "ord_HACKED" } });
     expect(client.verifyWebhookSignature(validSignature, tamperedBody, timestamp)).toBe(false);
+
+    // Replay attack: expired timestamp (> 5 minutes old)
+    const expiredTimestamp = (Math.floor(Date.now() / 1000) - 305).toString();
+    const expiredSignature = crypto
+      .createHmac("sha256", secret)
+      .update(`${expiredTimestamp}${rawBody}`)
+      .digest("base64");
+    expect(client.verifyWebhookSignature(expiredSignature, rawBody, expiredTimestamp)).toBe(false);
   });
 
   it("5. Updates order, payment, and enrollment status in dynamic DB", async () => {

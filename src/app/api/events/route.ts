@@ -76,6 +76,7 @@ export async function POST(req: NextRequest) {
 
       const eventTitle = "title" in event ? event.title : "ThinkOva Event";
       const eventDate = "date" in event ? event.date : "the upcoming scheduled day";
+      const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.thinkova.ai").replace(/\/$/, "");
 
       // 1. Dispatch Microsoft Email (Graph / SMTP)
       if (userEmail) {
@@ -83,7 +84,7 @@ export async function POST(req: NextRequest) {
           await defaultDispatcher.sendEmail({
             to: userEmail,
             subject: `🔔 Reminder: ${eventTitle} - ThinkOva Live Event`,
-            text: `Hello ${userName},\n\nThis is your reminder for "${eventTitle}" scheduled for ${eventDate}.\n\nAccess all live streams and materials at: https://thinkova.ai/events\n\nWarm regards,\nThinkOva Academic Team`,
+            text: `Hello ${userName},\n\nThis is your reminder for "${eventTitle}" scheduled for ${eventDate}.\n\nAccess all live streams and materials at: ${baseUrl}/events\n\nWarm regards,\nThinkOva Academic Team`,
             html: `
               <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #0B0C0F; background: #F4F3EE; border-radius: 16px;">
                 <h2 style="color: #FF6026;">🔔 Live Event Reminder</h2>
@@ -93,7 +94,7 @@ export async function POST(req: NextRequest) {
                   <p style="margin: 0; font-weight: bold; font-size: 16px;">${eventTitle}</p>
                   <p style="margin: 6px 0 0; color: #5A5F6B; font-size: 14px;">Date: ${eventDate}</p>
                 </div>
-                <a href="https://thinkova.ai/events" style="background: #0B0C0F; color: white; padding: 10px 24px; border-radius: 9999px; text-decoration: none; font-weight: bold; font-size: 13px; display: inline-block;">View Live Stream &rarr;</a>
+                <a href="${baseUrl}/events" style="background: #0B0C0F; color: white; padding: 10px 24px; border-radius: 9999px; text-decoration: none; font-weight: bold; font-size: 13px; display: inline-block;">View Live Stream &rarr;</a>
               </div>
             `,
             metadata: { eventId, type: "EVENT_REMINDER" },
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest) {
           await defaultDispatcher.sendWhatsApp({
             to: targetPhone,
             templateName: "thinkova_event_reminder",
-            fallbackText: `🔔 Reminder for ${userName}: "${eventTitle}" is coming up on ${eventDate}! Watch online at https://thinkova.ai/events`,
+            fallbackText: `🔔 Reminder for ${userName}: "${eventTitle}" is coming up on ${eventDate}! Watch online at ${baseUrl}/events`,
             metadata: { eventId, type: "EVENT_REMINDER" },
           });
         } catch (e) {

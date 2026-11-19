@@ -73,7 +73,7 @@ export const whatsappTemplates = {
       `4️⃣ *Level 8 Demo Day:* Live showcase at school where you see your child’s AI helper in action!`,
       ``,
       `📥 *Official 8-Week Curriculum & Lab Guide (PDF):*`,
-      `https://thinkova.ai/downloads/ThinkOva-Eight-Week-Curriculum.pdf`,
+      `https://www.thinkova.ai/downloads/ThinkOva-Eight-Week-Curriculum.pdf`,
       ``,
       `💬 Have any questions? Simply reply to this chat anytime — our academic mentors are here to assist!`,
       ``,

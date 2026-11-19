@@ -19,7 +19,7 @@ export const siteConfig = {
   title: "ThinkOva · An eight-week AI course for Grades 5–8",
   description:
     "Don't just use AI. Build with it. ThinkOva is an eight-week after-school AI course for Grades 5–8, taught by a trained tutor at your child's school. ₹4,999 all-in.",
-  url: process.env.NEXT_PUBLIC_SITE_URL ?? "https://thinkova.ai",
+  url: process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.thinkova.ai",
   schoolName: process.env.NEXT_PUBLIC_SCHOOL_NAME ?? "",
   batchStartDate: process.env.NEXT_PUBLIC_BATCH_START ?? "",
   /** Falls back to the section that explains how to join when no enrolment URL is configured. */

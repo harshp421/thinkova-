@@ -157,6 +157,13 @@ export class MongoDatabaseDriver implements IDatabaseDriver {
     const { _id, ...setFields } = record as any;
     const docId = record.id || (typeof _id === "string" ? _id : undefined);
 
+    // Strip undefined keys so MongoDB does not write undefined/null values into sparse indexes
+    for (const key of Object.keys(setFields)) {
+      if (setFields[key] === undefined) {
+        delete setFields[key];
+      }
+    }
+
     await db.collection(collection).updateOne(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { $or: [{ id: docId }, { _id: docId as any }] } as any,
@@ -169,6 +176,14 @@ export class MongoDatabaseDriver implements IDatabaseDriver {
     const db = await this.getDb();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { _id, ...setFields } = partial as any;
+
+    // Strip undefined keys so MongoDB does not write undefined/null values into sparse indexes
+    for (const key of Object.keys(setFields)) {
+      if (setFields[key] === undefined) {
+        delete setFields[key];
+      }
+    }
+
     await db.collection(collection).updateOne(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { $or: [{ id }, { _id: id as any }] } as any,

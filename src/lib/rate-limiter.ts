@@ -33,6 +33,16 @@ export const RATE_LIMIT_RULES: Record<string, RateLimitRule> = {
     maxRequests: 10,
     windowSeconds: 60,
   },
+  // Max 3 school partnership lead inquiries per IP per minute (prevents CRM & email spam)
+  "/api/school-pack": {
+    maxRequests: 3,
+    windowSeconds: 60,
+  },
+  // Max 10 event reminders and actions per IP per minute (prevents OpenWA WhatsApp & email quota exhaustion)
+  "/api/events": {
+    maxRequests: 10,
+    windowSeconds: 60,
+  },
 };
 
 /**

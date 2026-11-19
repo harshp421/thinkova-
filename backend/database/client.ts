@@ -131,15 +131,59 @@ export class DynamicDatabaseManager {
   /**
    * Diagnostic and health status metadata exposed via /api/db
    */
-  public getDatabaseStatus() {
-    const telemetry = this.router.getRouterTelemetry();
+  public async getDatabaseStatus() {
     const isSchoolsConfigured = Boolean(process.env.SCHOOLS_DATABASE_URL);
     const isCommerceConfigured = Boolean(process.env.STUDENTS_COMMERCE_DATABASE_URL);
 
-    const activeDrivers = Object.values(telemetry.drivers || {}).map((d) => d.dialect);
-    const driverLabel = activeDrivers.length > 0 
-      ? activeDrivers.map((d) => d.toUpperCase()).join(" / ") + " (Managed Connection)" 
-      : "Dynamic Universal Adapter (Memory)";
+    // Warm-up connections if not connected
+    const schoolsDriver = this.router.getDriver("schools_db");
+    if (schoolsDriver && !schoolsDriver.getStatus().connected) {
+      await schoolsDriver.connect().catch(() => {});
+    }
+    const commerceDriver = this.router.getDriver("commerce_db");
+    if (commerceDriver && !commerceDriver.getStatus().connected) {
+      await commerceDriver.connect().catch(() => {});
+    }
+
+    const telemetry = this.router.getRouterTelemetry();
+    const isSchoolsConnected = telemetry.drivers.schools_db?.connected;
+    const isCommerceConnected = telemetry.drivers.commerce_db?.connected;
+
+    let driverLabel = "Dynamic Universal Adapter (Memory)";
+    if (isSchoolsConnected && isCommerceConnected) {
+      driverLabel = "MONGODB ATLAS (thinkova_schools + thinkova_commerce)";
+    } else if (isSchoolsConnected || isCommerceConnected) {
+      driverLabel = "MONGODB ATLAS (Partial Managed Connection)";
+    }
+
+    let coursesCount = 0;
+    let tracksCount = 0;
+    let usersCount = 0;
+    let studentsCount = 0;
+    let ordersCount = 0;
+    let paymentsCount = 0;
+
+    try {
+      const courses = await this.router.find("courses", undefined, undefined, "schools").catch(() => []);
+      coursesCount = courses.length;
+      const tracks = await this.router.find("tracks", undefined, undefined, "schools").catch(() => []);
+      tracksCount = tracks.length;
+      const users = await this.router.find("users", undefined, undefined, "commerce").catch(() => []);
+      usersCount = users.length;
+      const students = await this.router.find("students", undefined, undefined, "commerce").catch(() => []);
+      studentsCount = students.length;
+      const orders = await this.router.find("orders", undefined, undefined, "commerce").catch(() => []);
+      ordersCount = orders.length;
+      const payments = await this.router.find("payments", undefined, undefined, "commerce").catch(() => []);
+      paymentsCount = payments.length;
+    } catch {
+      coursesCount = this.memory.courses.size;
+      tracksCount = this.memory.tracks.size;
+      usersCount = this.memory.users.size;
+      studentsCount = this.memory.students.size;
+      ordersCount = this.memory.orders.size;
+      paymentsCount = this.memory.payments.size;
+    }
 
     return {
       status: "STABILIZED",
@@ -152,12 +196,12 @@ export class DynamicDatabaseManager {
         schools: this.memory.schools.size,
         batches: this.memory.batches.size,
         tutors: this.memory.tutors.size,
-        courses: this.memory.courses.size,
-        tracks: this.memory.tracks.size,
-        users: this.memory.users.size,
-        students: this.memory.students.size,
-        orders: this.memory.orders.size,
-        payments: this.memory.payments.size,
+        courses: coursesCount,
+        tracks: tracksCount,
+        users: usersCount,
+        students: studentsCount,
+        orders: ordersCount,
+        payments: paymentsCount,
       },
     };
   }
