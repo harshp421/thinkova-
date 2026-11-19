@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
     const updatedFullName = fullName !== undefined ? String(fullName).trim() : existingUser.fullName;
 
     // Validate phone if provided
-    if (phone !== undefined) {
+    if (phone !== undefined && updatedPhone) {
       const cleanDigits = updatedPhone.replace(/\D/g, "");
       if (cleanDigits.length < 10) {
         return NextResponse.json(

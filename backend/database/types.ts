@@ -149,7 +149,7 @@ export interface TrackEntity {
 
 export interface UserEntity {
   id: string;
-  phone: string;
+  phone?: string;
   email: string;
   username: string;
   fullName?: string;

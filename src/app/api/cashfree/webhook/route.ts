@@ -120,7 +120,7 @@ export async function POST(request: Request) {
       });
 
       const wa = whatsappTemplates.enrolmentConfirmed({
-        parentPhone: enrolledUser.phone,
+        parentPhone: enrolledUser.phone || "",
         parentName: enrolledUser.username || "Parent",
         studentName: enrolledStudent.fullName,
         schoolName: school?.officialName || enrolledEnrollment.schoolUid,
@@ -139,14 +139,16 @@ export async function POST(request: Request) {
         metadata: { orderId, eventType, gateway: "CASHFREE", courseId: enrolledCourse?.id },
       });
 
-      // Dispatch WhatsApp
-      await defaultDispatcher.sendWhatsApp({
-        to: enrolledUser.phone,
-        templateName: wa.templateName,
-        fallbackText: wa.fallbackText,
-        components: wa.components,
-        metadata: { orderId, eventType, gateway: "CASHFREE", courseId: enrolledCourse?.id },
-      });
+      // Dispatch WhatsApp if user has a registered phone number
+      if (enrolledUser.phone) {
+        await defaultDispatcher.sendWhatsApp({
+          to: enrolledUser.phone,
+          templateName: wa.templateName,
+          fallbackText: wa.fallbackText,
+          components: wa.components,
+          metadata: { orderId, eventType, gateway: "CASHFREE", courseId: enrolledCourse?.id },
+        });
+      }
 
       await dbManager.commerce.markAlertSent("ENROLMENT", orderId);
     }

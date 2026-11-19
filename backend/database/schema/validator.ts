@@ -136,9 +136,9 @@ export class PreSchemaValidator {
   // 4. User Entity Normalization
   public static normalizeUser(data: Partial<UserEntity>): UserEntity {
     if (!data.id) throw new PreSchemaValidationError("User", "Missing required id", "id");
-    const phone = this.toNonEmptyString(data.phone, "User", "phone");
     const email = this.toNonEmptyString(data.email, "User", "email").toLowerCase();
     const username = this.toNonEmptyString(data.username || email.split("@")[0], "User", "username");
+    const phone = data.phone && String(data.phone).trim().length > 0 ? String(data.phone).trim() : undefined;
 
     return {
       id: String(data.id),
@@ -147,7 +147,7 @@ export class PreSchemaValidator {
       username,
       fullName: data.fullName ? String(data.fullName).trim() : undefined,
       role: (data.role || "PARENT") as UserEntity["role"],
-      isPhoneVerified: Boolean(data.isPhoneVerified),
+      isPhoneVerified: Boolean(data.isPhoneVerified && phone),
       isEmailVerified: Boolean(data.isEmailVerified),
       consentTimestamp: this.toDate(data.consentTimestamp || new Date(), "User", "consentTimestamp"),
       createdAt: this.toDate(data.createdAt || new Date(), "User", "createdAt"),

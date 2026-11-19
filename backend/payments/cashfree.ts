@@ -228,14 +228,41 @@ export class CashfreeClient {
   }
 
   /**
-   * Verifies Cashfree webhook signature using HMAC-SHA256
+   * Verifies Cashfree webhook signature using HMAC-SHA256 and validates
+   * timestamp freshness within a 5-minute window to prevent replay attacks.
    */
-  public verifyWebhookSignature(signature: string, rawBody: string, timestamp: string): boolean {
+  public verifyWebhookSignature(
+    signature: string,
+    rawBody: string,
+    timestamp: string,
+    maxAgeMs: number = 5 * 60 * 1000
+  ): boolean {
     const secret = process.env.CASHFREE_SECRET_KEY;
     if (!secret) {
       return false;
     }
 
+    // 1. Replay attack prevention: validate timestamp freshness (5-minute sliding window)
+    if (maxAgeMs > 0) {
+      const tsNum = Number(timestamp);
+      if (!timestamp || isNaN(tsNum) || tsNum <= 0) {
+        console.warn("[Cashfree] Missing or invalid webhook timestamp:", timestamp);
+        return false;
+      }
+
+      // Support both epoch seconds (10-digit) and epoch milliseconds (13-digit)
+      const tsMs = tsNum > 1e11 ? tsNum : tsNum * 1000;
+      const ageMs = Math.abs(Date.now() - tsMs);
+
+      if (ageMs > maxAgeMs) {
+        console.warn(
+          `[Cashfree] Webhook timestamp expired: age ${Math.round(ageMs / 1000)}s exceeds tolerance ${maxAgeMs / 1000}s`
+        );
+        return false;
+      }
+    }
+
+    // 2. Cryptographic signature verification using timing-safe comparison
     try {
       const signatureData = `${timestamp}${rawBody}`;
       const expectedSignature = crypto

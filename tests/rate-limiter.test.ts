@@ -177,5 +177,51 @@ describe("Public Endpoints Rate-Limiter & Bot / Carding Protection", () => {
       const json = await blockedRes.json();
       expect(json.message).toContain("Allowed 10 requests per window");
     });
+
+    it("Intercepts rapid /api/school-pack partnership requests and blocks spam at max 3 / min", async () => {
+      const spammerIp = "185.220.101.5";
+
+      for (let i = 0; i < 3; i++) {
+        const req = new NextRequest("https://www.thinkova.ai/api/school-pack", {
+          method: "POST",
+          headers: { "cf-connecting-ip": spammerIp },
+        });
+        const res = await proxy(req);
+        expect(res.status).toBe(200);
+      }
+
+      const blockedReq = new NextRequest("https://www.thinkova.ai/api/school-pack", {
+        method: "POST",
+        headers: { "cf-connecting-ip": spammerIp },
+      });
+      const blockedRes = await proxy(blockedReq);
+
+      expect(blockedRes.status).toBe(429);
+      const json = await blockedRes.json();
+      expect(json.message).toContain("Allowed 3 requests per window");
+    });
+
+    it("Intercepts rapid /api/events requests and throttles OpenWA & email notification triggers at max 10 / min", async () => {
+      const eventsFlooderIp = "185.220.101.6";
+
+      for (let i = 0; i < 10; i++) {
+        const req = new NextRequest("https://www.thinkova.ai/api/events", {
+          method: "POST",
+          headers: { "cf-connecting-ip": eventsFlooderIp },
+        });
+        const res = await proxy(req);
+        expect(res.status).toBe(200);
+      }
+
+      const blockedReq = new NextRequest("https://www.thinkova.ai/api/events", {
+        method: "POST",
+        headers: { "cf-connecting-ip": eventsFlooderIp },
+      });
+      const blockedRes = await proxy(blockedReq);
+
+      expect(blockedRes.status).toBe(429);
+      const json = await blockedRes.json();
+      expect(json.message).toContain("Allowed 10 requests per window");
+    });
   });
 });

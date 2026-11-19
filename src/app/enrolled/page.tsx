@@ -74,7 +74,7 @@ export default async function EnrolledPage({ searchParams }: EnrolledPageProps) 
               });
 
               const wa = whatsappTemplates.enrolmentConfirmed({
-                parentPhone: user.phone,
+                parentPhone: user.phone || "",
                 parentName: user.username || "Parent",
                 studentName: student.fullName,
                 schoolName: student.schoolUid,
@@ -83,11 +83,13 @@ export default async function EnrolledPage({ searchParams }: EnrolledPageProps) 
                 amountPaid: `₹${(order.amountInPaise / 100).toLocaleString("en-IN")}`,
                 startDate: "the upcoming Saturday batch",
               });
-              await defaultDispatcher.sendWhatsApp({
-                to: user.phone,
-                templateName: "thinkova_enrolment_confirmed",
-                fallbackText: wa.fallbackText,
-              });
+              if (user.phone) {
+                await defaultDispatcher.sendWhatsApp({
+                  to: user.phone,
+                  templateName: "thinkova_enrolment_confirmed",
+                  fallbackText: wa.fallbackText,
+                });
+              }
             }
           }
         } catch (e) {

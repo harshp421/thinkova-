@@ -337,6 +337,7 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
   }
 
   async getUserByPhone(phone: string): Promise<UserEntity | null> {
+    if (!phone || !phone.trim()) return null;
     const list = await this.router.find<UserEntity>("users", { phone: phone.trim() }, undefined, "commerce");
     return list.length > 0 && list[0] ? list[0] : null;
   }
@@ -497,7 +498,8 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
     });
 
     const studentName = student?.fullName || "Student";
-    const learningPortalUrl = `/learning/${payload.studentId}?course=${encodeURIComponent(payload.courseId)}`;
+    const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.thinkova.ai").replace(/\/$/, "");
+    const learningPortalUrl = `${baseUrl}/learning/${payload.studentId}?course=${encodeURIComponent(payload.courseId)}`;
 
     // Dispatch Automations (OpenWA & Microsoft Graph)
     if (parent?.phone) {
@@ -505,7 +507,7 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
       await notificationDispatcher.sendWhatsApp({
         to: cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone,
         templateName: "enrolment_confirmed_and_lab_opened",
-        fallbackText: `🎉 ThinkOva Enrolment Confirmed! ${studentName} is officially enrolled in ${payload.courseTitle}. Weekly school lab starts next batch. Student learning portal is now open: http://localhost:3000${learningPortalUrl}`,
+        fallbackText: `🎉 ThinkOva Enrolment Confirmed! ${studentName} is officially enrolled in ${payload.courseTitle}. Weekly school lab starts next batch. Student learning portal is now open: ${learningPortalUrl}`,
         metadata: { studentId: payload.studentId, courseId: payload.courseId, enrollmentId: enrollment.id },
       });
     }
@@ -514,7 +516,7 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
       await notificationDispatcher.sendEmail({
         to: parent.email,
         subject: `🎉 Enrolment Confirmed: ${studentName} in ThinkOva ${payload.courseTitle}`,
-        text: `Hello ${parent.fullName || "Parent"},\n\nWe are thrilled to confirm ${studentName}'s enrolment in ${payload.courseTitle}.\n\nSchool Lab: In-school weekly sessions\nKits: All equipment provided at school\nStudent Learning Portal: http://localhost:3000${learningPortalUrl}\n\nWarm regards,\nThinkOva Academic Team`,
+        text: `Hello ${parent.fullName || "Parent"},\n\nWe are thrilled to confirm ${studentName}'s enrolment in ${payload.courseTitle}.\n\nSchool Lab: In-school weekly sessions\nKits: All equipment provided at school\nStudent Learning Portal: ${learningPortalUrl}\n\nWarm regards,\nThinkOva Academic Team`,
         html: `
           <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #0B0C0F;">
             <h2 style="color: #FF6026;">🎉 Enrolment Confirmed!</h2>
@@ -527,7 +529,7 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
               <p style="margin: 4px 0;"><strong>Tuition Plan:</strong> ${payload.paymentPlan === "FULL" ? "Paid in Full" : "Part 1 Confirmed"}</p>
             </div>
             <p>
-              <a href="http://localhost:3000${learningPortalUrl}" style="background: #FF6026; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
+              <a href="${learningPortalUrl}" style="background: #FF6026; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
                 Launch Learning Portal & Lab &rarr;
               </a>
             </p>

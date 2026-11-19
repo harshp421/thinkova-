@@ -42,34 +42,48 @@ export class OpenWAClient {
     return (process.env.OPENWA_SESSION_ID || this.sessionId || "thinkova-notifications").trim();
   }
 
+  private getCandidateBaseUrls(): string[] {
+    const configured = this.getBaseUrl();
+    const urls = [configured];
+    if (configured.includes("172.169.233.17") || !configured.includes("127.0.0.1")) {
+      urls.push("http://127.0.0.1:8008/api");
+      urls.push("http://localhost:8008/api");
+    }
+    return Array.from(new Set(urls));
+  }
+
   /**
    * Automatically resolves session identifier from friendly name (e.g. "thinkova-notifications")
    */
   public async getActiveSessionId(): Promise<string> {
     if (this.resolvedSessionId) return this.resolvedSessionId;
 
-    const baseUrl = this.getBaseUrl();
     const apiKey = this.getApiKey();
     const configuredSessionId = this.getSessionId();
+    const candidates = this.getCandidateBaseUrls();
 
-    try {
-      const res = await fetch(`${baseUrl}/sessions`, {
-        headers: { "X-API-Key": apiKey },
-      });
-      if (res.ok) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const sessions: any[] = await res.json();
-        const found =
-          sessions.find((s) => s.id === configuredSessionId || s.name === configuredSessionId) ||
-          sessions.find((s) => s.status === "WORKING" || s.status === "ready" || s.status === "connected") ||
-          sessions[0];
-        if (found) {
-          this.resolvedSessionId = found.id || found.name;
-          return this.resolvedSessionId as string;
+    for (const baseUrl of candidates) {
+      try {
+        const res = await fetch(`${baseUrl}/sessions`, {
+          headers: { "X-API-Key": apiKey },
+          signal: AbortSignal.timeout(3000),
+        });
+        if (res.ok) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const sessions: any[] = await res.json();
+          const found =
+            sessions.find((s) => s.id === configuredSessionId || s.name === configuredSessionId) ||
+            sessions.find((s) => s.status === "WORKING" || s.status === "ready" || s.status === "connected") ||
+            sessions[0];
+          if (found) {
+            this.resolvedSessionId = found.id || found.name;
+            this.baseUrl = baseUrl;
+            return this.resolvedSessionId as string;
+          }
         }
+      } catch {
+        // Try next candidate
       }
-    } catch {
-      // Fallback to configured sessionId
     }
 
     return configuredSessionId;
@@ -115,48 +129,55 @@ export class OpenWAClient {
       };
     }
 
-    const baseUrl = this.getBaseUrl();
     const apiKey = this.getApiKey();
     const targetSessionId = await this.getActiveSessionId();
-    const url = `${baseUrl}/sessions/${encodeURIComponent(targetSessionId)}/messages/send-text`;
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-Key": apiKey,
-        },
-        body: JSON.stringify({ chatId, text }),
-      });
+    const candidates = this.getCandidateBaseUrls();
+    let lastError = "";
 
-      if (!res.ok) {
-        const errText = await res.text().catch(() => "");
-        throw new Error(`OpenWA HTTP ${res.status}: ${errText}`);
-      }
+    for (const baseUrl of candidates) {
+      const url = `${baseUrl}/sessions/${encodeURIComponent(targetSessionId)}/messages/send-text`;
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": apiKey,
+          },
+          body: JSON.stringify({ chatId, text }),
+          signal: AbortSignal.timeout(10000),
+        });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const data: any = await res.json().catch(() => ({}));
-      return {
-        messageId: data?.id || data?.messageId || `wa_${Date.now()}`,
-        status: "SENT",
-        recipientJid: chatId,
-        isSimulation: false,
-      };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes("is not registered")) {
-        console.warn(`[OpenWA] Recipient ${chatId} does not have an active WhatsApp account.`);
-      } else {
-        console.error(`[OpenWA] Failed to dispatch text to ${chatId}:`, message);
+        if (!res.ok) {
+          const errText = await res.text().catch(() => "");
+          throw new Error(`OpenWA HTTP ${res.status}: ${errText}`);
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data: any = await res.json().catch(() => ({}));
+        this.baseUrl = baseUrl;
+        return {
+          messageId: data?.id || data?.messageId || `wa_${Date.now()}`,
+          status: "SENT",
+          recipientJid: chatId,
+          isSimulation: false,
+        };
+      } catch (err: unknown) {
+        lastError = err instanceof Error ? err.message : String(err);
       }
-      return {
-        messageId: "",
-        status: "FAILED",
-        recipientJid: chatId,
-        isSimulation: false,
-        error: message,
-      };
     }
+
+    if (lastError.includes("is not registered")) {
+      console.warn(`[OpenWA] Recipient ${chatId} does not have an active WhatsApp account.`);
+    } else {
+      console.error(`[OpenWA] Failed to dispatch text to ${chatId}:`, lastError);
+    }
+    return {
+      messageId: "",
+      status: "FAILED",
+      recipientJid: chatId,
+      isSimulation: false,
+      error: lastError,
+    };
   }
 
   /**
