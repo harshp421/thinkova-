@@ -116,7 +116,10 @@ export default function CheckoutPage() {
 
     try {
       const effectiveStudentId = targetStudent?.id || (user ? `std_${user.id}` : "student");
-      const siteOrigin = typeof window !== "undefined" ? window.location.origin : "https://www.thinkova.ai";
+      const siteOrigin =
+        typeof window !== "undefined" && window.location.protocol === "https:"
+          ? window.location.origin
+          : "https://www.thinkova.ai";
       const returnUrl = `${siteOrigin}/confirmation?order_id={order_id}&courseId=${encodeURIComponent(
         course.id
       )}&studentId=${encodeURIComponent(effectiveStudentId)}&plan=${paymentPlan}&paid=${payTodayAmount}`;
