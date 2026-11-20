@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { POST as postEvents } from "../src/app/api/events/route";
 import { POST as postProfile, GET as getProfile } from "../src/app/api/profile/route";
 import { POST as postEnrol } from "../src/app/api/courses/enrol/route";
 import { POST as postSignup } from "../src/app/api/auth/signup/route";
 import { POST as postLogin } from "../src/app/api/auth/login/route";
+import { POST as postCashfreeOrder } from "../src/app/api/cashfree/order/route";
 import { GET as getProgress } from "../src/app/api/learning/progress/route";
 import { getStudentProgressData } from "../src/data/progress-data";
 import { dbManager } from "../backend/database/client";
@@ -249,5 +250,55 @@ describe("8 Core Tasks - Verification & Integration Tests", () => {
     const existingData = await existingLoginRes.json();
     expect(existingData.success).toBe(true);
     expect(existingData.user.email).toBe("kavita.verma@example.com");
+  });
+
+  it("Cashfree Order creation: Re-uses existing user by phone without throwing duplicate key collision", async () => {
+    process.env.CASHFREE_APP_ID = "CF_APP_TEST_12345";
+    process.env.CASHFREE_SECRET_KEY = "cf_sec_test_67890";
+    process.env.CASHFREE_ENV = "SANDBOX";
+
+    const originalFetch = global.fetch;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        order_id: "ord_reuse_test_101",
+        cf_order_id: "998877",
+        payment_session_id: "session_mock_123",
+        order_status: "ACTIVE",
+        order_amount: 4999,
+        order_currency: "INR",
+      }),
+      text: async () => "",
+    }) as any;
+
+    try {
+      const orderReq = new NextRequest("http://localhost:3000/api/cashfree/order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: "ord_reuse_test_101",
+          studentName: "Anvith Verma",
+          parentName: "Kavita Verma",
+          parentEmail: "kavita.verma@example.com",
+          parentPhone: "9876543210", // Matches existing user's phone
+          schoolUid: "DPS01",
+        }),
+      });
+
+      const orderRes = await postCashfreeOrder(orderReq);
+      expect(orderRes.status).toBe(200);
+      const data = await orderRes.json();
+      expect(data.status).toBe("success");
+      expect(data.orderId).toBe("ord_reuse_test_101");
+      expect(data.paymentSessionId).toBe("session_mock_123");
+
+      // Verify the order linked to the existing user ID, not a newly generated ID
+      const savedOrder = await dbManager.commerce.getOrderById(data.orderId);
+      expect(savedOrder?.userId).toBe(testUserId);
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 });
