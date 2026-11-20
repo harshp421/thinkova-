@@ -101,18 +101,31 @@ export class CashfreeClient {
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://www.thinkova.ai";
     const isProd = (process.env.CASHFREE_ENV || "").toUpperCase() === "PRODUCTION";
 
-    const returnUrl =
+    let returnUrl =
       input.returnUrl ||
-      (isProd && !siteUrl.startsWith("https://")
-        ? "https://www.thinkova.ai/confirmation?order_id={order_id}"
-        : `${siteUrl}/confirmation?order_id={order_id}`);
-    const notifyUrl =
+      (siteUrl.startsWith("https://")
+        ? `${siteUrl}/confirmation?order_id={order_id}`
+        : "https://www.thinkova.ai/confirmation?order_id={order_id}");
+
+    // Cashfree PG Orders API strictly mandates that order_meta.return_url MUST be https://
+    if (!returnUrl.startsWith("https://")) {
+      if (returnUrl.startsWith("http://localhost") || returnUrl.startsWith("http://127.0.0.1")) {
+        const query = returnUrl.includes("?") ? returnUrl.slice(returnUrl.indexOf("?")) : "?order_id={order_id}";
+        returnUrl = `https://www.thinkova.ai/confirmation${query}`;
+      } else {
+        returnUrl = returnUrl.replace(/^http:\/\//i, "https://");
+      }
+    }
+
+    let notifyUrl =
       input.notifyUrl ||
       (siteUrl.startsWith("https://")
         ? `${siteUrl}/api/cashfree/webhook`
-        : isProd
-        ? "https://www.thinkova.ai/api/cashfree/webhook"
-        : undefined);
+        : "https://www.thinkova.ai/api/cashfree/webhook");
+
+    if (notifyUrl && !notifyUrl.startsWith("https://")) {
+      notifyUrl = notifyUrl.replace(/^http:\/\//i, "https://");
+    }
 
     // Clean customer phone strictly to valid 10-digit Indian domestic mobile number
     const rawDigits = (input.customer.customerPhone || "").replace(/\D/g, "");
