@@ -247,6 +247,22 @@ export interface AssessmentEntity {
   createdAt: Date;
 }
 
+export interface NotificationEntity {
+  id: string;
+  channel: "WHATSAPP" | "EMAIL";
+  recipient: string;
+  templateName?: string;
+  subject?: string;
+  content: string;
+  status: "SENT" | "FAILED" | "SIMULATION";
+  transport: "OPENWA" | "MICROSOFT_GRAPH" | "SMTP" | "RESEND" | "WATI" | "SIMULATION";
+  messageId?: string;
+  error?: string;
+  metadata?: Record<string, unknown>;
+  sentAt: Date;
+  createdAt: Date;
+}
+
 // ==========================================
 // 3. Learning State & Multi-State Analytics
 // ==========================================

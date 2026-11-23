@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { cashfreeClient } from "../../../../../backend/payments/cashfree";
 import { dbManager } from "../../../../../backend/database/client";
 import type { UserEntity } from "../../../../../backend/database/types";
+import { defaultDispatcher } from "../../../../../backend/notifications/dispatcher";
+import { emailTemplates } from "../../../../../backend/templates/email-templates";
+import { whatsappTemplates } from "../../../../../backend/templates/whatsapp-templates";
 
 export const runtime = "nodejs";
 
@@ -286,6 +289,66 @@ export async function GET(request: Request) {
         paymentMethod: "UPI",
         amountInPaise: Math.round((cfOrder.orderAmount || 4999) * 100),
       });
+
+      // Dual-trigger idempotent confirmation dispatch:
+      if (joinedDetails && (!dbOrder?.enrolmentNotificationSentAt)) {
+        try {
+          const user = joinedDetails.user;
+          const student = joinedDetails.student;
+          const enrollment = joinedDetails.enrollment;
+          const course = joinedDetails.course;
+          const batch = joinedDetails.batch;
+          const school = enrollment ? await dbManager.schools.findByUid(enrollment.schoolUid) : null;
+          const tutor = batch ? await dbManager.schools.getTutor(batch.tutorId) : null;
+          const amountPaidStr = `₹${((cfOrder.orderAmount || 4999)).toLocaleString("en-IN")}`;
+
+          if (user?.email) {
+            const email = emailTemplates.enrolmentSuccess({
+              parentName: user.username || "Parent",
+              studentName: student?.fullName || "Student",
+              currentGrade: student?.currentGrade || 6,
+              schoolName: school?.officialName || enrollment?.schoolUid || "ThinkOva Lab",
+              batchSchedule: batch ? `${batch.dayOfWeek}s ${batch.startTime}` : "Weekly Lab Sessions",
+              tutorName: tutor?.fullName || "Lead AI Mentor",
+              amountPaid: amountPaidStr,
+              orderId,
+            });
+
+            await defaultDispatcher.sendEmail({
+              to: user.email,
+              subject: email.subject,
+              html: email.html,
+              text: email.text,
+              metadata: { orderId, gateway: "CASHFREE", courseId: course?.id, source: "CONFIRMATION_SCREEN" },
+            });
+          }
+
+          if (user?.phone) {
+            const wa = whatsappTemplates.enrolmentConfirmed({
+              parentPhone: user.phone,
+              parentName: user.username || "Parent",
+              studentName: student?.fullName || "Student",
+              schoolName: school?.officialName || enrollment?.schoolUid || "ThinkOva Lab",
+              grade: student?.currentGrade || 6,
+              orderId,
+              amountPaid: amountPaidStr,
+              startDate: batch ? `${batch.dayOfWeek}s ${batch.startTime}` : "Next Session",
+            });
+
+            await defaultDispatcher.sendWhatsApp({
+              to: user.phone,
+              templateName: wa.templateName,
+              fallbackText: wa.fallbackText,
+              components: wa.components,
+              metadata: { orderId, gateway: "CASHFREE", courseId: course?.id, source: "CONFIRMATION_SCREEN" },
+            });
+          }
+
+          await dbManager.commerce.markAlertSent("ENROLMENT", orderId);
+        } catch (dispatchErr) {
+          console.error("[Cashfree Order GET] Failed to dispatch automated notifications:", dispatchErr);
+        }
+      }
     } else {
       joinedDetails = await dbManager.commerce.getOrderWithJoinedDetails(orderId);
     }

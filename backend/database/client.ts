@@ -1,5 +1,6 @@
 import type {
   AssessmentEntity,
+  NotificationEntity,
   CohortBatchEntity,
   CourseEntity,
   EnrollmentEntity,
@@ -31,6 +32,7 @@ import { UniversalSchemaMapper } from "./schema/mapper";
 export type {
   ISchoolsRepository,
   ICommerceRepository,
+  NotificationEntity,
   OrderWithRelations,
   InstallmentDueWithRelations,
   RefundWithRelations,

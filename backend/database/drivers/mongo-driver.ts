@@ -164,9 +164,15 @@ export class MongoDatabaseDriver implements IDatabaseDriver {
       }
     }
 
+    // Ensure id and _id are explicitly populated to guarantee deterministic upsert without $or ambiguity
+    if (docId) {
+      setFields.id = docId;
+      setFields._id = docId;
+    }
+
     await db.collection(collection).updateOne(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { $or: [{ id: docId }, { _id: docId as any }] } as any,
+      { id: docId } as any,
       { $set: setFields },
       { upsert: true }
     );

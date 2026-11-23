@@ -52,9 +52,23 @@ export class DatabaseRouter {
    * Automatically resolves driver implementations based on environment connection strings.
    */
   public initDriversFromEnv() {
-    const defaultUri = (process.env.DATABASE_URL || "").trim().replace(/^["']|["']$/g, "").trim();
-    const schoolsUri = (process.env.SCHOOLS_DATABASE_URL || "").trim().replace(/^["']|["']$/g, "").trim();
-    const commerceUri = (process.env.STUDENTS_COMMERCE_DATABASE_URL || "").trim().replace(/^["']|["']$/g, "").trim();
+    const defaultUri = (
+      process.env.DATABASE_URL ||
+      process.env.MONGODB_URI ||
+      process.env.MONGO_URI ||
+      ""
+    ).trim().replace(/^["']|["']$/g, "").trim();
+
+    const schoolsUri = (
+      process.env.SCHOOLS_DATABASE_URL ||
+      defaultUri
+    ).trim().replace(/^["']|["']$/g, "").trim();
+
+    const commerceUri = (
+      process.env.STUDENTS_COMMERCE_DATABASE_URL ||
+      process.env.COMMERCE_DATABASE_URL ||
+      defaultUri
+    ).trim().replace(/^["']|["']$/g, "").trim();
 
     // 1. Resolve and register driver for Schools domain
     if (schoolsUri) {
@@ -74,12 +88,16 @@ export class DatabaseRouter {
       }
     }
 
-    // 3. Fallback to generic DATABASE_URL if domain specific URIs are absent
-    if (defaultUri && !schoolsUri && !commerceUri) {
+    // 3. Fallback to generic default driver if domain specific URIs are absent
+    if (defaultUri && !this.domainRoutes.has("commerce")) {
       const driver = this.createDriverFromUri("primary_db", defaultUri);
       if (driver) {
         this.registerDriver("primary_db", driver);
         this.domainRoutes.set("default", "primary_db");
+        this.domainRoutes.set("commerce", "primary_db");
+        if (!this.domainRoutes.has("schools")) {
+          this.domainRoutes.set("schools", "primary_db");
+        }
       }
     }
   }

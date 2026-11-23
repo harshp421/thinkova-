@@ -6,6 +6,7 @@ import type {
   PaymentEntity,
   RefundEntity,
   AssessmentEntity,
+  NotificationEntity,
   CourseProgressEntity,
   LearningStateAnalysisEntity,
   CourseEntity,
@@ -110,6 +111,8 @@ export interface ICommerceRepository {
     weeklyPlan: CourseWeeklyPlanItem[];
     videos: CourseVideoEntity[];
   }>;
+  saveNotification(notification: Partial<NotificationEntity>): Promise<NotificationEntity>;
+  getNotifications(filter?: { recipient?: string; channel?: "WHATSAPP" | "EMAIL"; limit?: number }): Promise<NotificationEntity[]>;
 }
 
 /**
@@ -745,6 +748,20 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
       weeklyPlan: mergedPlan,
       videos,
     };
+  }
+
+  async saveNotification(notification: Partial<NotificationEntity>): Promise<NotificationEntity> {
+    const valid = PreSchemaValidator.normalizeNotification(notification);
+    await this.router.upsert("notifications", valid, "commerce");
+    return valid;
+  }
+
+  async getNotifications(filter?: { recipient?: string; channel?: "WHATSAPP" | "EMAIL"; limit?: number }): Promise<NotificationEntity[]> {
+    const query: Record<string, unknown> = {};
+    if (filter?.recipient) query.recipient = filter.recipient;
+    if (filter?.channel) query.channel = filter.channel;
+    const list = await this.router.find<NotificationEntity>("notifications", query, { limit: filter?.limit || 100 }, "commerce");
+    return list.sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
   }
 }
 
