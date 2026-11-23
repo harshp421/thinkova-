@@ -9,7 +9,6 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   serverExternalPackages: [
     "@azure/identity",
-    "@microsoft/microsoft-graph-client",
     "open",
     "powershell-utils",
     "wsl-utils",

@@ -18,45 +18,17 @@ export interface OpenWASessionStatus {
   isSimulation: boolean;
 }
 
-import fs from "fs";
-import path from "path";
-
 /**
- * Safely resolves environment variables with live disk check fallback.
- * Bypasses Node.js stale process.env caching when .env is updated while dev server runs.
+ * Safely resolves environment variables with fallback.
  */
 function getEnvFresh(key: string, defaultValue: string = ""): string {
-  // 1. Check live disk file (.env.local, then .env) first for most up-to-date values
-  try {
-    const candidates = [
-      path.resolve(process.cwd(), ".env.local"),
-      path.resolve(process.cwd(), ".env"),
-    ];
-    for (const file of candidates) {
-      if (fs.existsSync(file)) {
-        const content = fs.readFileSync(file, "utf8");
-        const regex = new RegExp(`^${key}\\s*=\\s*["']?([^"'\\r\\n]+)["']?`, "m");
-        const match = content.match(regex);
-        if (match && match[1]) {
-          const diskVal = match[1].trim();
-          if (diskVal) return diskVal;
-        }
-      }
-    }
-  } catch {
-    // fs access fallback
-  }
-
-  // 2. Check process.env
   const envVal = process.env[key]?.trim();
   if (envVal) {
-    // If running on Windows local dev and env points to loopback where no container exists, use production IP
     if (process.platform === "win32" && (envVal.includes("127.0.0.1") || envVal.includes("localhost"))) {
       return "http://172.169.233.17:8008/api";
     }
     return envVal;
   }
-
   return defaultValue;
 }
 

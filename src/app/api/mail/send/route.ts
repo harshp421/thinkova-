@@ -297,7 +297,7 @@ export async function POST(request: Request) {
       status: "queued_simulated",
       transport: "OUTBOX_LEDGER",
       provider: "Microsoft Graph API",
-      note: "Microsoft Graph credentials not defined in environment. Email saved to in-memory audit ledger. Set AZURE_TENANT_ID, AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET in .env.local to send live.",
+      note: "Microsoft Graph credentials not defined in environment. Email saved to in-memory audit ledger. Set AZURE_TENANT_ID, AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET in .env to send live.",
       outboxRecordId: outboxRecord.id,
       to: targetTo,
       subject,

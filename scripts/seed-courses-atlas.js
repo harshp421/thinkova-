@@ -11,9 +11,9 @@ const { MongoClient } = require("mongodb");
 const path = require("path");
 const fs = require("fs");
 
-// Load environment variables from .env / .env.local
+// Load environment variables from .env
 function loadEnv() {
-  const envPath = fs.existsSync(".env.local") ? ".env.local" : ".env";
+  const envPath = ".env";
   if (!fs.existsSync(envPath)) return {};
   const content = fs.readFileSync(envPath, "utf-8");
   const env = {};
@@ -34,7 +34,7 @@ const env = loadEnv();
 const uri = process.env.SCHOOLS_DATABASE_URL || env.SCHOOLS_DATABASE_URL;
 
 if (!uri) {
-  console.error("Error: Missing SCHOOLS_DATABASE_URL. Please define it in .env.local.");
+  console.error("Error: Missing SCHOOLS_DATABASE_URL. Please define it in .env.");
   process.exit(1);
 }
 
