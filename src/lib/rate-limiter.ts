@@ -28,6 +28,16 @@ export const RATE_LIMIT_RULES: Record<string, RateLimitRule> = {
     maxRequests: 10,
     windowSeconds: 60,
   },
+  // Max 5 password reset requests per IP per minute (prevents reset email flooding)
+  "/api/auth/forgot-password": {
+    maxRequests: 5,
+    windowSeconds: 60,
+  },
+  // Max 5 password resets per IP per minute (prevents reset token brute-forcing)
+  "/api/auth/reset-password": {
+    maxRequests: 5,
+    windowSeconds: 60,
+  },
   // Max 10 order initiation calls per IP per minute (prevents card testing / carding fraud)
   "/api/cashfree/order": {
     maxRequests: 10,
@@ -40,6 +50,11 @@ export const RATE_LIMIT_RULES: Record<string, RateLimitRule> = {
   },
   // Max 10 event reminders and actions per IP per minute (prevents OpenWA WhatsApp & email quota exhaustion)
   "/api/events": {
+    maxRequests: 10,
+    windowSeconds: 60,
+  },
+  // Max 10 notification diagnostic requests per IP per minute
+  "/api/notifications/status": {
     maxRequests: 10,
     windowSeconds: 60,
   },

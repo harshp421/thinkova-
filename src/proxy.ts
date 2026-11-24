@@ -167,15 +167,22 @@ export { proxy as middleware };
  */
 export const config = {
   matcher: [
+    "/tutor",
     "/tutor/:path*",
     "/api/tutor/:path*",
+    "/learning",
     "/learning/:path*",
+    "/profile",
     "/profile/:path*",
+    "/who-is-learning",
     "/who-is-learning/:path*",
+    "/tell-us-child",
     "/tell-us-child/:path*",
-    "/api/auth/signup",
-    "/api/auth/login",
+    "/api/auth/:path*",
     "/api/cashfree/order",
     "/api/cashfree/order/:path*",
+    "/api/school-pack",
+    "/api/events",
+    "/api/notifications/status",
   ],
 };

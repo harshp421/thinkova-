@@ -29,6 +29,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Student profile not found." }, { status: 404 });
     }
 
+    // [SEC-08] IDOR Prevention: Verify that the student belongs to the logged-in parent
+    if (student.parentUserId !== session.userId && session.role !== "SUPER_ADMIN") {
+      return NextResponse.json(
+        { error: "Forbidden: You are not authorized to enroll this student profile." },
+        { status: 403 }
+      );
+    }
+
     const parentUserId = session.userId;
 
     // Find course title and pricing
