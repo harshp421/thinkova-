@@ -52,16 +52,34 @@ export class DatabaseRouter {
    * Automatically resolves driver implementations based on environment connection strings.
    */
   public initDriversFromEnv() {
-    const defaultUri = (process.env.DATABASE_URL || "").trim().replace(/^["']|["']$/g, "").trim();
-    const schoolsUri = (process.env.SCHOOLS_DATABASE_URL || "").trim().replace(/^["']|["']$/g, "").trim();
-    const commerceUri = (process.env.STUDENTS_COMMERCE_DATABASE_URL || "").trim().replace(/^["']|["']$/g, "").trim();
+    const defaultUri = (
+      process.env.DATABASE_URL ||
+      process.env.MONGODB_URI ||
+      process.env.MONGO_URI ||
+      ""
+    ).trim().replace(/^["']|["']$/g, "").trim();
+
+    const schoolsUri = (
+      process.env.SCHOOLS_DATABASE_URL ||
+      defaultUri
+    ).trim().replace(/^["']|["']$/g, "").trim();
+
+    const commerceUri = (
+      process.env.STUDENTS_COMMERCE_DATABASE_URL ||
+      process.env.COMMERCE_DATABASE_URL ||
+      defaultUri
+    ).trim().replace(/^["']|["']$/g, "").trim();
+
+    const isTestEnv = process.env.NODE_ENV === "test" || process.env.VITEST === "true";
 
     // 1. Resolve and register driver for Schools domain
     if (schoolsUri) {
       const driver = this.createDriverFromUri("schools_db", schoolsUri);
       if (driver) {
         this.registerDriver("schools_db", driver);
-        this.domainRoutes.set("schools", "schools_db");
+        if (!isTestEnv) {
+          this.domainRoutes.set("schools", "schools_db");
+        }
       }
     }
 
@@ -70,16 +88,22 @@ export class DatabaseRouter {
       const driver = this.createDriverFromUri("commerce_db", commerceUri);
       if (driver) {
         this.registerDriver("commerce_db", driver);
-        this.domainRoutes.set("commerce", "commerce_db");
+        if (!isTestEnv) {
+          this.domainRoutes.set("commerce", "commerce_db");
+        }
       }
     }
 
-    // 3. Fallback to generic DATABASE_URL if domain specific URIs are absent
-    if (defaultUri && !schoolsUri && !commerceUri) {
+    // 3. Fallback to generic default driver if domain specific URIs are absent
+    if (defaultUri && !this.domainRoutes.has("commerce") && !isTestEnv) {
       const driver = this.createDriverFromUri("primary_db", defaultUri);
       if (driver) {
         this.registerDriver("primary_db", driver);
         this.domainRoutes.set("default", "primary_db");
+        this.domainRoutes.set("commerce", "primary_db");
+        if (!this.domainRoutes.has("schools")) {
+          this.domainRoutes.set("schools", "primary_db");
+        }
       }
     }
   }

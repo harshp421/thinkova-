@@ -1,6 +1,7 @@
 import { graphMailer } from "./graph-mailer";
 import { openwaClient } from "./openwa";
 import { smtpMailer } from "./smtp";
+import { dbRouter } from "../database/router/db-router";
 
 /**
  * Unified Dispatcher & Outbox Ledger for Emails and WhatsApp Messages
@@ -143,6 +144,26 @@ export class NotificationDispatcher {
       this.emailOutbox.pop();
     }
 
+    // Persist to MongoDB Atlas asynchronously:
+    try {
+      await dbRouter.upsert("notifications", {
+        id: record.id,
+        channel: "EMAIL",
+        recipient: record.to,
+        subject: record.subject,
+        content: record.text,
+        status: record.status === "FAILED" ? "FAILED" : (record.metadata?.mode === "SIMULATED_OUTBOX" ? "SIMULATION" : "SENT"),
+        transport: (record.metadata?.transport as any) || (record.metadata?.mode === "SIMULATED_OUTBOX" ? "SIMULATION" : "MICROSOFT_GRAPH"),
+        messageId: (record.metadata?.messageId as string) || (record.metadata?.resendId as string) || undefined,
+        error: (record.metadata?.error as string) || (record.metadata?.providerError as string) || undefined,
+        metadata: record.metadata,
+        sentAt: record.sentAt,
+        createdAt: new Date(),
+      }, "commerce");
+    } catch (dbErr) {
+      console.warn("[Dispatcher] Failed to persist email notification to database:", dbErr);
+    }
+
     return record;
   }
 
@@ -217,7 +238,56 @@ export class NotificationDispatcher {
       this.whatsAppOutbox.pop();
     }
 
+    // Persist to MongoDB Atlas asynchronously:
+    try {
+      await dbRouter.upsert("notifications", {
+        id: record.id,
+        channel: "WHATSAPP",
+        recipient: record.to,
+        templateName: record.templateName,
+        content: record.fallbackText,
+        status: record.status === "FAILED" ? "FAILED" : (record.metadata?.mode === "SIMULATED_OUTBOX" ? "SIMULATION" : "SENT"),
+        transport: (record.metadata?.transport as any) || (record.metadata?.mode === "SIMULATED_OUTBOX" ? "SIMULATION" : "OPENWA"),
+        messageId: (record.metadata?.messageId as string) || undefined,
+        error: (record.metadata?.error as string) || undefined,
+        metadata: record.metadata,
+        sentAt: record.sentAt,
+        createdAt: new Date(),
+      }, "commerce");
+    } catch (dbErr) {
+      console.warn("[Dispatcher] Failed to persist WhatsApp notification to database:", dbErr);
+    }
+
     return record;
+  }
+
+  /**
+   * Retrieves notification ledger from MongoDB Atlas (with in-memory fallback)
+   */
+  public async getPersistentNotifications(filter?: {
+    recipient?: string;
+    channel?: "WHATSAPP" | "EMAIL";
+    limit?: number;
+  }) {
+    try {
+      const query: Record<string, unknown> = {};
+      if (filter?.recipient) query.recipient = filter.recipient;
+      if (filter?.channel) query.channel = filter.channel;
+      const docs = await dbRouter.find("notifications", query, { limit: filter?.limit || 50 }, "commerce");
+      if (docs && docs.length > 0) {
+        return docs.sort((a: any, b: any) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
+      }
+    } catch {
+      // Fallback to in-memory ledger
+    }
+
+    if (filter?.channel === "WHATSAPP") {
+      return this.getWhatsAppOutbox(filter?.recipient);
+    }
+    if (filter?.channel === "EMAIL") {
+      return this.getEmailOutbox(filter?.recipient);
+    }
+    return [...this.whatsAppOutbox, ...this.emailOutbox].sort((a, b) => b.sentAt.getTime() - a.sentAt.getTime());
   }
 
   public getEmailOutbox(recipient?: string): DispatchedEmail[] {

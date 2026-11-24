@@ -191,7 +191,7 @@ export class MicrosoftGraphMailer {
         provider: "Microsoft Graph API",
         sender: defaultSender,
         instructions:
-          "Define AZURE_TENANT_ID, AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET in .env.local to enable live delivery.",
+          "Define AZURE_TENANT_ID, AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET in .env to enable live delivery.",
       };
     }
 
@@ -235,7 +235,7 @@ export class MicrosoftGraphMailer {
     const cfg = this.getConfig();
     if (!cfg) {
       throw new Error(
-        "Microsoft Graph API is not configured. Set AZURE_TENANT_ID, AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET in .env.local"
+        "Microsoft Graph API is not configured. Set AZURE_TENANT_ID, AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET in .env"
       );
     }
 
@@ -270,7 +270,7 @@ export class MicrosoftGraphMailer {
       return {
         success: false,
         message:
-          "Microsoft Graph API credentials not configured. Please define AZURE_TENANT_ID, AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET in .env.local.",
+          "Microsoft Graph API credentials not configured. Please define AZURE_TENANT_ID, AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET in .env.",
       };
     }
 

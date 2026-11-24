@@ -40,8 +40,11 @@ export async function GET(request: Request) {
     status: scheduler.getJobStatus(j.id),
   }));
 
-  const emailOutbox = defaultDispatcher.getEmailOutbox().slice(0, 10);
-  const whatsAppOutbox = defaultDispatcher.getWhatsAppOutbox().slice(0, 10);
+  // Fetch persistent notifications from MongoDB Atlas (with in-memory ledger fallback)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recentNotifications: any[] = await defaultDispatcher.getPersistentNotifications({ limit: 20 });
+  const emailOutbox = recentNotifications.filter((n: any) => n.channel === "EMAIL");
+  const whatsAppOutbox = recentNotifications.filter((n: any) => n.channel === "WHATSAPP");
 
   return NextResponse.json({
     status: "ok",
@@ -49,18 +52,23 @@ export async function GET(request: Request) {
     health,
     jobs,
     recentNotifications: {
+      storageSource: "MONGODB_ATLAS",
       totalEmailsSent: emailOutbox.length,
       totalWhatsAppSent: whatsAppOutbox.length,
-      emails: emailOutbox.map((e) => ({
+      emails: emailOutbox.map((e: any) => ({
         id: e.id,
-        to: e.to,
+        to: e.recipient || e.to,
         subject: e.subject,
+        status: e.status,
+        transport: e.transport,
         sentAt: e.sentAt,
       })),
-      whatsApp: whatsAppOutbox.map((w) => ({
+      whatsApp: whatsAppOutbox.map((w: any) => ({
         id: w.id,
-        to: w.to,
+        to: w.recipient || w.to,
         template: w.templateName,
+        status: w.status,
+        transport: w.transport,
         sentAt: w.sentAt,
       })),
     },

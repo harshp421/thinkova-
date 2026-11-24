@@ -1,6 +1,9 @@
-import { dbManager } from "../backend/database/client";
+import { dbManager, dbRouter } from "../backend/database/client";
 
 export async function seedDynamicTestData() {
+  dbRouter.setDomainRoute("schools", "memory");
+  dbRouter.setDomainRoute("commerce", "memory");
+  dbRouter.setDomainRoute("default", "memory");
   dbManager.memory.clearAll();
 
   // 1. Dynamic School
@@ -25,6 +28,25 @@ export async function seedDynamicTestData() {
     email: "rohan@thinkova.ai",
     phone: "+919800011122",
     backgroundVerified: true,
+    status: "ACTIVE",
+    createdAt: new Date(),
+  });
+
+  // 2.5 Dynamic Course
+  await dbManager.schools.upsertCourse({
+    id: "robotics-starter",
+    title: "Robotics & Hardware Engineering",
+    trackId: "robotics",
+    trackName: "Robotics",
+    grades: "Grades 5–8",
+    minGrade: 5,
+    maxGrade: 8,
+    targetGrades: [5, 6, 7, 8],
+    duration: "6 weeks",
+    weeklyPlan: [
+      { week: 1, title: "Microcontroller Basics", subtitle: "Getting started with circuit design" },
+      { week: 4, title: "Autonomous Obstacle Detection Rover", subtitle: "Bring ultrasonic sensors and breadboard" },
+    ],
     status: "ACTIVE",
     createdAt: new Date(),
   });
@@ -76,9 +98,10 @@ export async function seedDynamicTestData() {
     id: "enr_01",
     studentId: "stu_01",
     cohortBatchId: "batch_dps_01",
+    courseId: "robotics-starter",
     schoolUid: "DPS-PUN-01",
     paymentPlan: "INSTALLMENTS",
-    status: "PENDING_PAYMENT",
+    status: "ENROLLED",
     currentLevel: 4,
     enrolledAt: new Date(),
     installment2Paid: false,

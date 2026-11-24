@@ -9,7 +9,6 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   serverExternalPackages: [
     "@azure/identity",
-    "@microsoft/microsoft-graph-client",
     "open",
     "powershell-utils",
     "wsl-utils",
@@ -34,6 +33,18 @@ const nextConfig: NextConfig = {
         permanent: false,
       },
     ];
+  },
+  async rewrites() {
+    if (process.env.BACKEND_API_URL) {
+      const backendUrl = process.env.BACKEND_API_URL.replace(/\/$/, "");
+      return [
+        {
+          source: "/api/:path*",
+          destination: `${backendUrl}/api/:path*`,
+        },
+      ];
+    }
+    return [];
   },
 };
 

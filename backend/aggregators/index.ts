@@ -10,7 +10,6 @@ import type {
   WeeklyAssessmentRecord,
 } from "./types";
 import { dbManager } from "../database/client";
-import { LIVE_SESSIONS } from "@/data/live-classes";
 
 function formatPaiseToRupees(amountInPaise: number): string {
   const rupees = Math.round(amountInPaise / 100);
@@ -235,78 +234,112 @@ export const preAggregators: PreAggregatorCollection = {
   /**
    * Pre-aggregates daily class reminders for classes occurring on the target date.
    */
+  /**
+   * Pre-aggregates daily class reminders strictly for enrolled students with learning in progress.
+   * Pulls real student enrolments, course progress, and parent phone numbers directly from MongoDB.
+   * Never injects static, hardcoded, or mock phone numbers.
+   */
   classReminders: async (
     targetDateStr?: string
   ): Promise<PreAggregatorResult<ClassReminderRecord>> => {
-    // Current IST date calculation (e.g. "Thu 12 Nov")
     const now = new Date();
+    const istDayOfWeek = now.toLocaleDateString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      weekday: "long", // e.g. "Wednesday"
+    });
     const istDateString = now.toLocaleDateString("en-IN", {
       timeZone: "Asia/Kolkata",
       weekday: "short",
       day: "numeric",
       month: "short",
-    }); // e.g. "Thu 12 Nov" or similar
+    }); // e.g. "Wed 25 Nov"
 
-    const filterDate = targetDateStr?.trim().toLowerCase();
+    const filter = targetDateStr?.trim().toLowerCase();
 
-    // Match sessions scheduled for this target date
-    const matchingSessions = LIVE_SESSIONS.filter((s) => {
-      if (!filterDate || filterDate === "today" || filterDate === "current") {
-        // Default: matches session scheduled for today (e.g. "Thu 12 Nov")
-        return (
-          s.dateDisplay.toLowerCase().includes(istDateString.toLowerCase()) ||
-          s.dateDisplay.toLowerCase().includes("thu 12") ||
-          s.dateDisplay.toLowerCase().includes("12 nov")
-        );
-      }
-      return (
-        s.dateDisplay.toLowerCase().includes(filterDate) ||
-        s.title.toLowerCase().includes(filterDate) ||
-        s.id.toLowerCase() === filterDate
-      );
-    });
+    // Query strictly real active enrolled learners with learning in progress from database
+    const activeLearners = await dbManager.commerce.getActiveLearningEnrollments();
+
+    // If no active enrolled students exist in MongoDB, return empty immediately (NEVER fallback to static numbers)
+    if (!activeLearners || activeLearners.length === 0) {
+      return {
+        data: [],
+        count: 0,
+        metadata: {
+          filterDate: targetDateStr || "today",
+          resolvedDateDisplay: istDateString,
+          matchedSessionsCount: 0,
+          queryExecutedAt: new Date().toISOString(),
+          notice: "No enrolled learners found in database.",
+        },
+      };
+    }
 
     const records: ClassReminderRecord[] = [];
 
-    // Fallback/standard enrolled learners for live class reminders
-    const enrolledStudents = [
-      {
-        studentId: "aarav",
-        studentName: "Aarav Sharma",
-        parentName: "Sandeep Sharma",
-        parentPhone: "919820143210",
-        parentEmail: "sandeep.sharma@example.com",
-        schoolName: "Oakridge International School",
-      },
-      {
-        studentId: "diya",
-        studentName: "Diya Patel",
-        parentName: "Meera Patel",
-        parentPhone: "919876543210",
-        parentEmail: "meera.patel@example.com",
-        schoolName: "Delhi Public School",
-      },
-    ];
+    for (const learner of activeLearners) {
+      const { enrollment, student, user, progress } = learner;
 
-    for (const session of matchingSessions) {
-      for (const student of enrolledStudents) {
-        records.push({
-          studentId: student.studentId,
-          sessionId: session.id,
-          parentPhone: student.parentPhone,
-          parentName: student.parentName,
-          parentEmail: student.parentEmail,
-          studentName: student.studentName,
-          schoolName: student.schoolName,
-          className: session.title,
-          levelNumber: session.levelNumber,
-          classDate: session.dateDisplay,
-          classTime: `${session.timeDisplay} IST (${session.durationMinutes} min)`,
-          tutorName: session.tutorName,
-          prepItem: session.prepNotes[0] || "Bring your Level 6 agent",
-          joinUrl: session.meetUrl || "https://meet.google.com/thinkova-ai-level7",
-        });
+      // 1. Resolve student's batch schedule
+      const batch = enrollment.cohortBatchId
+        ? await dbManager.schools.getBatch(enrollment.cohortBatchId)
+        : null;
+
+      const batchDay = (batch?.dayOfWeek || "").toLowerCase();
+
+      // 2. Resolve schedule availability:
+      // If a target date/filter was provided, match against batch dayOfWeek, date, or "all"
+      // Otherwise match against today's day of the week in IST or RUNNING batch.
+      const isDayMatch = !filter || filter === "today" || filter === "current"
+        ? (batchDay === istDayOfWeek.toLowerCase() || batch?.status === "RUNNING")
+        : (
+            batchDay.includes(filter) ||
+            filter === "all" ||
+            filter === "force" ||
+            (batch?.batchCode && batch.batchCode.toLowerCase().includes(filter)) ||
+            (enrollment.courseId && enrollment.courseId.toLowerCase().includes(filter)) ||
+            (student.fullName && student.fullName.toLowerCase().includes(filter))
+          );
+
+      if (!isDayMatch && batch) {
+        continue;
       }
+
+      // 3. Resolve student's course and curriculum level in progress
+      const courseId = enrollment.courseId || "robotics-starter";
+      const course = await dbManager.schools.getCourseById(courseId);
+      const currentLevel = progress?.currentWeek || enrollment.currentLevel || 1;
+
+      const planItem = course?.weeklyPlan?.find((w) => w.week === currentLevel);
+      const className = planItem?.title
+        ? `Level ${currentLevel}: ${planItem.title}`
+        : `${course?.title || "STEM & Robotics Program"} - Level ${currentLevel}: Hands-on Lab`;
+
+      const tutor = batch ? await dbManager.schools.getTutor(batch.tutorId) : null;
+      const classTime = batch?.startTime && batch?.endTime
+        ? `${batch.startTime} – ${batch.endTime} IST`
+        : "5:00 PM – 6:30 PM IST";
+
+      const prepItem = planItem?.subtitle || "Bring your project kit and charged laptop";
+      const joinUrl = `${siteUrl}/learning/lab-session?studentId=${student.id}&courseId=${courseId}&level=${currentLevel}`;
+
+      records.push({
+        studentId: student.id,
+        sessionId: `session_${enrollment.cohortBatchId || "batch"}_lvl_${currentLevel}`,
+        parentPhone: user.phone!,
+        parentName: user.fullName || user.username || "Parent",
+        parentEmail: user.email,
+        studentName: student.fullName,
+        schoolName: student.schoolName || student.schoolUid || "ThinkOva Partner School",
+        className,
+        levelNumber: currentLevel,
+        classDate: targetDateStr && targetDateStr !== "today" && targetDateStr !== "current"
+          ? targetDateStr
+          : istDateString,
+        classTime,
+        tutorName: tutor?.fullName || "ThinkOva Lead Tutor",
+        prepItem,
+        joinUrl,
+      });
     }
 
     return {
@@ -315,7 +348,7 @@ export const preAggregators: PreAggregatorCollection = {
       metadata: {
         filterDate: targetDateStr || "today",
         resolvedDateDisplay: istDateString,
-        matchedSessionsCount: matchingSessions.length,
+        matchedSessionsCount: records.length,
         queryExecutedAt: new Date().toISOString(),
       },
     };

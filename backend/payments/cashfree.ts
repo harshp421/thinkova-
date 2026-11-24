@@ -98,33 +98,31 @@ export class CashfreeClient {
       );
     }
 
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://www.thinkova.ai";
     const isProd = (process.env.CASHFREE_ENV || "").toUpperCase() === "PRODUCTION";
+    const prodDomain = "https://www.thinkova.ai";
 
-    let returnUrl =
-      input.returnUrl ||
-      (siteUrl.startsWith("https://")
-        ? `${siteUrl}/confirmation?order_id={order_id}`
-        : "https://www.thinkova.ai/confirmation?order_id={order_id}");
+    let returnUrl = input.returnUrl || `${prodDomain}/confirmation?order_id={order_id}`;
 
-    // Cashfree PG Orders API strictly mandates that order_meta.return_url MUST be https://
-    if (!returnUrl.startsWith("https://")) {
-      if (returnUrl.startsWith("http://localhost") || returnUrl.startsWith("http://127.0.0.1")) {
-        const query = returnUrl.includes("?") ? returnUrl.slice(returnUrl.indexOf("?")) : "?order_id={order_id}";
-        returnUrl = `https://www.thinkova.ai/confirmation${query}`;
-      } else {
-        returnUrl = returnUrl.replace(/^http:\/\//i, "https://");
-      }
+    // Cashfree PG Orders API strictly mandates a valid public https:// URL.
+    // Automatically sanitize and route any local, loopback, non-SSL IP, or http:// URLs via deployed production domain.
+    if (
+      !returnUrl.startsWith("https://") ||
+      returnUrl.includes("localhost") ||
+      returnUrl.includes("127.0.0.1") ||
+      returnUrl.includes("172.169.233.17")
+    ) {
+      const query = returnUrl.includes("?") ? returnUrl.slice(returnUrl.indexOf("?")) : "?order_id={order_id}";
+      returnUrl = `${prodDomain}/confirmation${query}`;
     }
 
-    let notifyUrl =
-      input.notifyUrl ||
-      (siteUrl.startsWith("https://")
-        ? `${siteUrl}/api/cashfree/webhook`
-        : "https://www.thinkova.ai/api/cashfree/webhook");
-
-    if (notifyUrl && !notifyUrl.startsWith("https://")) {
-      notifyUrl = notifyUrl.replace(/^http:\/\//i, "https://");
+    let notifyUrl = input.notifyUrl || `${prodDomain}/api/cashfree/webhook`;
+    if (
+      !notifyUrl.startsWith("https://") ||
+      notifyUrl.includes("localhost") ||
+      notifyUrl.includes("127.0.0.1") ||
+      notifyUrl.includes("172.169.233.17")
+    ) {
+      notifyUrl = `${prodDomain}/api/cashfree/webhook`;
     }
 
     // Clean customer phone strictly to valid 10-digit Indian domestic mobile number

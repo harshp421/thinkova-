@@ -5,10 +5,13 @@ import { whatsappTemplates } from "../backend/templates/whatsapp-templates";
 import { GET, POST } from "../src/app/api/cron/class-reminders/route";
 import { NextRequest } from "next/server";
 import type { CronTrigger } from "../backend/cron/types";
+import { seedDynamicTestData } from "./fixtures";
+import { dbManager } from "../backend/database/client";
 
 describe("OpenWA Daily Class Reminder Automation", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     clearSentRemindersCache();
+    await seedDynamicTestData();
   });
 
   it("1. Configures the daily class reminder job with correct cron schedule and timezone", () => {
@@ -22,41 +25,50 @@ describe("OpenWA Daily Class Reminder Automation", () => {
 
   it("2. Formats WhatsApp class reminder template with accurate class timing, mentor, and preparation notes", () => {
     const wa = whatsappTemplates.classReminder({
-      parentPhone: "919820143210",
-      parentName: "Sandeep Sharma",
-      studentName: "Aarav Sharma",
-      className: "Personalise and improve",
-      levelNumber: 7,
-      classDate: "Thu 12 Nov",
-      classTime: "6:00 PM – 7:30 PM IST (90 min)",
-      tutorName: "Ms Ananya",
-      prepItem: "Bring your Level 6 agent",
-      joinUrl: "https://meet.google.com/thinkova-ai-level7",
+      parentPhone: "+919876543210",
+      parentName: "Sandeep Verma",
+      studentName: "Arjun Verma",
+      className: "Level 4: Autonomous Obstacle Detection Rover",
+      levelNumber: 4,
+      classDate: "Wed 25 Nov",
+      classTime: "14:30 – 16:00 IST",
+      tutorName: "Rohan Kulkarni (M.Tech CS)",
+      prepItem: "Bring ultrasonic sensors and breadboard",
+      joinUrl: "https://thinkova.ai/learning/lab-session?studentId=stu_01&courseId=robotics-starter&level=4",
     });
 
-    expect(wa.to).toBe("919820143210");
+    expect(wa.to).toBe("+919876543210");
     expect(wa.templateName).toBe("thinkova_class_reminder_daily_v1");
     expect(wa.fallbackText).toContain("CLASS REMINDER TODAY");
-    expect(wa.fallbackText).toContain("Aarav Sharma");
-    expect(wa.fallbackText).toContain("Level 7: Personalise and improve");
-    expect(wa.fallbackText).toContain("6:00 PM – 7:30 PM IST");
-    expect(wa.fallbackText).toContain("Ms Ananya");
-    expect(wa.fallbackText).toContain("Bring your Level 6 agent");
-    expect(wa.fallbackText).toContain("https://meet.google.com/thinkova-ai-level7");
+    expect(wa.fallbackText).toContain("Arjun Verma");
+    expect(wa.fallbackText).toContain("Level 4: Autonomous Obstacle Detection Rover");
+    expect(wa.fallbackText).toContain("14:30 – 16:00 IST");
+    expect(wa.fallbackText).toContain("Rohan Kulkarni (M.Tech CS)");
+    expect(wa.fallbackText).toContain("Bring ultrasonic sensors and breadboard");
   });
 
-  it("3. Pre-aggregates daily class reminders for classes occurring on the specific day", async () => {
-    const result = await preAggregators.classReminders("Thu 12 Nov");
-    expect(result.count).toBeGreaterThan(0);
+  it("3. Pre-aggregates daily class reminders strictly from real database records (never static mock numbers)", async () => {
+    const result = await preAggregators.classReminders("Wednesday");
+    expect(result.count).toBe(1);
     const first = result.data[0];
     expect(first).toBeDefined();
-    expect(first?.className).toContain("Level 7");
-    expect(first?.studentName).toBe("Aarav Sharma");
-    expect(first?.parentPhone).toBe("919820143210");
+    expect(first?.className).toContain("Level 4");
+    expect(first?.studentName).toBe("Arjun Verma");
+    expect(first?.parentPhone).toBe("+919876543210");
+    expect(first?.tutorName).toBe("Rohan Kulkarni (M.Tech CS)");
   });
 
-  it("4. Enforces idempotency and prevents over-logging duplicate events", async () => {
-    const testRecords = await preAggregators.classReminders("Thu 12 Nov");
+  it("4. Returns 0 records and dispatches nothing when no enrolled students exist in database", async () => {
+    // Clear all dynamic data
+    dbManager.memory.clearAll();
+
+    const emptyResult = await preAggregators.classReminders();
+    expect(emptyResult.count).toBe(0);
+    expect(emptyResult.data).toEqual([]);
+  });
+
+  it("5. Enforces idempotency and prevents over-logging duplicate events", async () => {
+    const testRecords = await preAggregators.classReminders("Wednesday");
     expect(testRecords.data.length).toBeGreaterThan(0);
 
     // Initial run dispatches reminders
@@ -78,7 +90,7 @@ describe("OpenWA Daily Class Reminder Automation", () => {
     expect(secondRunSummary.recordsProcessed).toBe(0);
   });
 
-  it("5. API Route GET handler returns structured execution summary and supports status query", async () => {
+  it("6. API Route GET handler returns structured execution summary and supports status query", async () => {
     // Status query
     const statusReq = new NextRequest("http://localhost:3000/api/cron/class-reminders?status=true");
     const statusRes = await GET(statusReq);
@@ -88,7 +100,7 @@ describe("OpenWA Daily Class Reminder Automation", () => {
     expect(statusData.schedule.frequency).toBe("DAILY");
 
     // Execution query for specific date
-    const runReq = new NextRequest("http://localhost:3000/api/cron/class-reminders?date=Thu+12+Nov&force=true");
+    const runReq = new NextRequest("http://localhost:3000/api/cron/class-reminders?date=Wednesday&force=true");
     const runRes = await GET(runReq);
     expect(runRes.status).toBe(200);
     const runData = await runRes.json();
@@ -98,13 +110,13 @@ describe("OpenWA Daily Class Reminder Automation", () => {
     expect(runData.quietMode).toBe(true);
   });
 
-  it("6. API Route POST handler handles JSON body with target date and force bypass", async () => {
+  it("7. API Route POST handler handles JSON body with target date and force bypass", async () => {
     const postReq = new NextRequest("http://localhost:3000/api/cron/class-reminders", {
       method: "POST",
       body: JSON.stringify({
-        date: "Thu 12 Nov",
+        date: "Wednesday",
         force: true,
-        studentId: "aarav",
+        studentId: "stu_01",
       }),
       headers: {
         "Content-Type": "application/json",

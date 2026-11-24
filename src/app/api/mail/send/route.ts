@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { graphMailer } from "../../../../../backend/notifications/graph-mailer";
 import { defaultDispatcher } from "../../../../../backend/notifications/dispatcher";
+import { verifySessionToken } from "../../../../../src/lib/auth-session";
 import {
   emailTemplates,
   type AbandonedCartData,
@@ -33,6 +34,83 @@ interface SendMailRequestBody {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data?: any;
   previewOnly?: boolean;
+}
+
+/**
+ * [SEC-01] Authorization Guard for Outbound Email Dispatch
+ * Prevents Open Email Relay abuse by verifying caller identity:
+ * 1. Internal jobs/automation via Bearer token (matching CRON_SECRET or INTERNAL_API_KEY)
+ * 2. Dedicated internal header (x-internal-secret or x-api-key)
+ * 3. Authenticated user session with authorized administrative/tutor role
+ */
+async function verifyEmailDispatchAuthorization(
+  request: Request
+): Promise<{ authorized: boolean; reason?: string }> {
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  const internalApiKey = process.env.INTERNAL_API_KEY?.trim();
+
+  const authHeader = request.headers.get("authorization")?.trim();
+  const internalSecretHeader =
+    request.headers.get("x-internal-secret")?.trim() ||
+    request.headers.get("x-api-key")?.trim();
+
+  // 1. Verify internal system credentials (Bearer token or x-internal-secret / x-api-key header)
+  if (cronSecret || internalApiKey) {
+    if (cronSecret && authHeader === `Bearer ${cronSecret}`) {
+      return { authorized: true };
+    }
+    if (internalApiKey && authHeader === `Bearer ${internalApiKey}`) {
+      return { authorized: true };
+    }
+    if (internalSecretHeader) {
+      if (cronSecret && internalSecretHeader === cronSecret) return { authorized: true };
+      if (internalApiKey && internalSecretHeader === internalApiKey) return { authorized: true };
+    }
+  }
+
+  // 2. Verify authenticated administrative or tutor session
+  try {
+    let token: string | undefined;
+
+    // Check cookie header
+    const cookieHeader = request.headers.get("cookie");
+    if (cookieHeader) {
+      const match = cookieHeader.match(/thinkova_session=([^;]+)/);
+      if (match && match[1]) {
+        token = match[1].trim();
+      }
+    }
+
+    // Check Authorization: Bearer <sessionToken>
+    if (!token && authHeader?.startsWith("Bearer ")) {
+      const candidate = authHeader.slice(7).trim();
+      if (candidate !== cronSecret && candidate !== internalApiKey) {
+        token = candidate;
+      }
+    }
+
+    if (token) {
+      const session = await verifySessionToken(token);
+      if (session) {
+        const allowedRoles = ["SUPER_ADMIN", "SCHOOL_ADMIN", "TUTOR"];
+        if (allowedRoles.includes(session.role)) {
+          return { authorized: true };
+        }
+        return {
+          authorized: false,
+          reason: `Forbidden: role '${session.role}' is not authorized to dispatch outbound emails.`,
+        };
+      }
+    }
+  } catch {
+    // Session verification failure
+  }
+
+  return {
+    authorized: false,
+    reason:
+      "Unauthorized: Outbound email dispatch requires a valid admin/tutor session or internal API secret (CRON_SECRET / INTERNAL_API_KEY).",
+  };
 }
 
 /**
@@ -154,13 +232,6 @@ export async function GET(request: Request) {
  * Dispatches an automated email via Microsoft Graph API or tests generation using template rendering.
  */
 export async function POST(request: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  const authHeader = request.headers.get("authorization");
-
-  if (cronSecret && authHeader && authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   let body: SendMailRequestBody;
   try {
     body = await request.json();
@@ -254,6 +325,19 @@ export async function POST(request: Request) {
     });
   }
 
+  // [SEC-01 Guard] Prevent Open Email Relay:
+  // Outbound email dispatch requires verified administrative or internal system credentials
+  const authCheck = await verifyEmailDispatchAuthorization(request);
+  if (!authCheck.authorized) {
+    return NextResponse.json(
+      {
+        error: authCheck.reason || "Unauthorized",
+        code: "ERR_UNAUTHORIZED_MAIL_RELAY",
+      },
+      { status: 401 }
+    );
+  }
+
   const targetTo = to || process.env.MAIL_SENDER || "info@thinkova.ai";
 
   try {
@@ -297,7 +381,7 @@ export async function POST(request: Request) {
       status: "queued_simulated",
       transport: "OUTBOX_LEDGER",
       provider: "Microsoft Graph API",
-      note: "Microsoft Graph credentials not defined in environment. Email saved to in-memory audit ledger. Set AZURE_TENANT_ID, AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET in .env.local to send live.",
+      note: "Microsoft Graph credentials not defined in environment. Email saved to in-memory audit ledger. Set AZURE_TENANT_ID, AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET in .env to send live.",
       outboxRecordId: outboxRecord.id,
       to: targetTo,
       subject,

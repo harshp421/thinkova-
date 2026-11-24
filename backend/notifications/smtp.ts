@@ -71,7 +71,7 @@ export class SmtpMailer {
     const cfg = this.getConfig();
     if (!cfg) {
       throw new Error(
-        "SMTP is not configured. Please define SMTP_HOST, SMTP_USER, and SMTP_PASSWORD in .env.local"
+        "SMTP is not configured. Please define SMTP_HOST, SMTP_USER, and SMTP_PASSWORD in .env"
       );
     }
 

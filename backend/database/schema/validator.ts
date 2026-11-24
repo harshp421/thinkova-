@@ -11,6 +11,7 @@ import type {
   PaymentEntity,
   RefundEntity,
   AssessmentEntity,
+  NotificationEntity,
   CourseProgressEntity,
   LearningStateAnalysisEntity,
 } from "../types";
@@ -151,6 +152,9 @@ export class PreSchemaValidator {
       isEmailVerified: Boolean(data.isEmailVerified),
       consentTimestamp: this.toDate(data.consentTimestamp || new Date(), "User", "consentTimestamp"),
       createdAt: this.toDate(data.createdAt || new Date(), "User", "createdAt"),
+      passwordHash: data.passwordHash ? String(data.passwordHash) : undefined,
+      resetPasswordToken: data.resetPasswordToken ? String(data.resetPasswordToken) : undefined,
+      resetPasswordExpires: data.resetPasswordExpires ? this.toDate(data.resetPasswordExpires, "User", "resetPasswordExpires") : undefined,
     };
   }
 
@@ -285,6 +289,29 @@ export class PreSchemaValidator {
       safetyPledgeVerified: Boolean(data.safetyPledgeVerified),
       reportSentAt: data.reportSentAt ? this.toDate(data.reportSentAt, "Assessment", "reportSentAt") : undefined,
       createdAt: this.toDate(data.createdAt || new Date(), "Assessment", "createdAt"),
+    };
+  }
+
+  // 10b. Notification Entity Normalization
+  public static normalizeNotification(data: Partial<NotificationEntity>): NotificationEntity {
+    if (!data.id) throw new PreSchemaValidationError("Notification", "Missing required id", "id");
+    const recipient = this.toNonEmptyString(data.recipient, "Notification", "recipient");
+    const content = typeof data.content === "string" ? data.content : "";
+
+    return {
+      id: String(data.id),
+      channel: (data.channel || "WHATSAPP") as NotificationEntity["channel"],
+      recipient,
+      templateName: data.templateName ? String(data.templateName) : undefined,
+      subject: data.subject ? String(data.subject) : undefined,
+      content,
+      status: (data.status || "SENT") as NotificationEntity["status"],
+      transport: (data.transport || "SIMULATION") as NotificationEntity["transport"],
+      messageId: data.messageId ? String(data.messageId) : undefined,
+      error: data.error ? String(data.error) : undefined,
+      metadata: data.metadata && typeof data.metadata === "object" ? data.metadata : undefined,
+      sentAt: this.toDate(data.sentAt || new Date(), "Notification", "sentAt"),
+      createdAt: this.toDate(data.createdAt || new Date(), "Notification", "createdAt"),
     };
   }
 

@@ -57,6 +57,7 @@ function SignUpForm() {
       fullName: fullName.trim(),
       email: email.trim().toLowerCase(),
       phone: cleanPhone,
+      password,
       whatsappUpdates,
     });
 

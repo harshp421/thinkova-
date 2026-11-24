@@ -17,7 +17,7 @@ export async function GET() {
     config: summary,
     instructions: summary.configured
       ? "Microsoft Graph API is configured and ready. Call POST /api/mail/verify to test Azure AD OAuth2 token or POST /api/mail/send to dispatch."
-      : "Microsoft Graph is not configured. Add AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, and MAIL_SENDER to .env.local",
+      : "Microsoft Graph is not configured. Add AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, and MAIL_SENDER to .env",
   });
 }
 

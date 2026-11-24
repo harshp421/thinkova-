@@ -11,7 +11,7 @@ describe("OpenWA WhatsApp Gateway Client", () => {
   });
 
   it("operates in simulation mode when no live API key is configured", async () => {
-    const client = new OpenWAClient();
+    const client = new OpenWAClient("");
     expect(client.isConfigured()).toBe(false);
 
     const result = await client.sendText("9820143210", "Hello parent! ThinkOva orientation starts this Saturday.");
@@ -22,7 +22,7 @@ describe("OpenWA WhatsApp Gateway Client", () => {
   });
 
   it("reports simulation status when queried without API credentials", async () => {
-    const client = new OpenWAClient();
+    const client = new OpenWAClient("");
     const status = await client.getSessionStatus();
     expect(status.status).toBe("SIMULATION");
     expect(status.isSimulation).toBe(true);

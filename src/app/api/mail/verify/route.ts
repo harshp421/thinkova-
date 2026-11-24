@@ -16,11 +16,23 @@ export async function POST(request: Request) {
 }
 
 async function handleVerification(request: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  const authHeader = request.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  const internalKey = process.env.INTERNAL_API_KEY?.trim();
+  const authHeader = request.headers.get("authorization")?.trim();
+  const internalSecretHeader =
+    request.headers.get("x-internal-secret")?.trim() ||
+    request.headers.get("x-api-key")?.trim();
 
-  if (cronSecret && authHeader && authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (cronSecret || internalKey) {
+    const isCronMatch = cronSecret && authHeader === `Bearer ${cronSecret}`;
+    const isInternalMatch = internalKey && authHeader === `Bearer ${internalKey}`;
+    const isHeaderMatch =
+      internalSecretHeader &&
+      (internalSecretHeader === cronSecret || internalSecretHeader === internalKey);
+
+    if (!isCronMatch && !isInternalMatch && !isHeaderMatch) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
   }
 
   try {
