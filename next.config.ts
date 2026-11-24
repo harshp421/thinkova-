@@ -7,9 +7,6 @@ const nextConfig: NextConfig = {
   serverExternalPackages: [
     "@azure/identity",
     "@microsoft/microsoft-graph-client",
-    "open",
-    "powershell-utils",
-    "wsl-utils",
   ],
   images: {
     formats: ["image/webp"],
