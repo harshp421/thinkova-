@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { Check, ChevronDown, Loader2, Sparkles, UserCheck } from "lucide-react";
 import { Container } from "@/components/ui/Container";
 import { siteConfig } from "@/data/site";
@@ -547,13 +548,13 @@ export function EnrolSection() {
                     />
                     <label htmlFor="consent-check" className="text-xs leading-[18px] text-[#5A5F6B]">
                       I agree to the{" "}
-                      <a href="/legal/terms" className="font-semibold text-[#0B0C0F] underline">
+                      <Link href="/legal/terms" className="font-semibold text-[#0B0C0F] underline">
                         Parent agreement
-                      </a>{" "}
+                      </Link>{" "}
                       and{" "}
-                      <a href="/legal/child-safety" className="font-semibold text-[#0B0C0F] underline">
+                      <Link href="/legal/child-safety" className="font-semibold text-[#0B0C0F] underline">
                         child safety terms
-                      </a>
+                      </Link>
                       . I understand kits stay at school unless my course includes taking them home.
                     </label>
                   </div>

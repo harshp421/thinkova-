@@ -18,14 +18,13 @@ export function CertificateModal({
   studentName,
 }: CertificateModalProps) {
   const [isDemoUnlocked, setIsDemoUnlocked] = useState(certificate.isUnlocked);
+  const [isExporting, setIsExporting] = useState(false);
 
   if (!isOpen) return null;
 
   const certCode = certificate.certificateCode || "THINKOVA-CERT-2026-AI-84920";
   const dateStr = certificate.issuedAt || "21 Nov 2026";
   const tutorStr = certificate.tutorName || "Ms Ananya Rao";
-
-  const [isExporting, setIsExporting] = useState(false);
 
   const handleDownloadPNG = async () => {
     try {

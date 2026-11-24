@@ -91,8 +91,15 @@ describe("OpenWA Daily Class Reminder Automation", () => {
   });
 
   it("6. API Route GET handler returns structured execution summary and supports status query", async () => {
+    const getAuthHeaders = () => {
+      const token = process.env.CRON_SECRET || process.env.INTERNAL_API_KEY || "thinkova_cron_secret_key_2026";
+      return { Authorization: `Bearer ${token}` };
+    };
+
     // Status query
-    const statusReq = new NextRequest("http://localhost:3000/api/cron/class-reminders?status=true");
+    const statusReq = new NextRequest("http://localhost:3000/api/cron/class-reminders?status=true", {
+      headers: getAuthHeaders(),
+    });
     const statusRes = await GET(statusReq);
     expect(statusRes.status).toBe(200);
     const statusData = await statusRes.json();
@@ -100,7 +107,9 @@ describe("OpenWA Daily Class Reminder Automation", () => {
     expect(statusData.schedule.frequency).toBe("DAILY");
 
     // Execution query for specific date
-    const runReq = new NextRequest("http://localhost:3000/api/cron/class-reminders?date=Wednesday&force=true");
+    const runReq = new NextRequest("http://localhost:3000/api/cron/class-reminders?date=Wednesday&force=true", {
+      headers: getAuthHeaders(),
+    });
     const runRes = await GET(runReq);
     expect(runRes.status).toBe(200);
     const runData = await runRes.json();
@@ -111,6 +120,7 @@ describe("OpenWA Daily Class Reminder Automation", () => {
   });
 
   it("7. API Route POST handler handles JSON body with target date and force bypass", async () => {
+    const token = process.env.CRON_SECRET || process.env.INTERNAL_API_KEY || "thinkova_cron_secret_key_2026";
     const postReq = new NextRequest("http://localhost:3000/api/cron/class-reminders", {
       method: "POST",
       body: JSON.stringify({
@@ -120,6 +130,7 @@ describe("OpenWA Daily Class Reminder Automation", () => {
       }),
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
       },
     });
 
