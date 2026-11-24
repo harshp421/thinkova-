@@ -10,6 +10,7 @@ import { GET as getProgress } from "../src/app/api/learning/progress/route";
 import { getStudentProgressData } from "../src/data/progress-data";
 import { dbManager } from "../backend/database/client";
 import { createSessionToken } from "../src/lib/auth-session";
+import { hashPassword } from "../backend/auth/crypto";
 
 describe("8 Core Tasks - Verification & Integration Tests", () => {
   const testUserId = `usr_test_${Date.now()}`;
@@ -24,6 +25,7 @@ describe("8 Core Tasks - Verification & Integration Tests", () => {
       username: "kavita",
       email: "kavita.verma@example.com",
       phone: "9876543210",
+      passwordHash: hashPassword("securePassword123"),
       role: "PARENT" as const,
       isPhoneVerified: true,
       isEmailVerified: true,
@@ -242,7 +244,7 @@ describe("8 Core Tasks - Verification & Integration Tests", () => {
     const existingLoginReq = new NextRequest("http://localhost:3000/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "kavita.verma@example.com" }),
+      body: JSON.stringify({ email: "kavita.verma@example.com", password: "securePassword123" }),
     });
 
     const existingLoginRes = await postLogin(existingLoginReq);

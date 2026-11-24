@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { dbManager } from "@/../backend/database/client";
 import { notificationDispatcher } from "@/../backend/notifications/dispatcher";
 import { createSessionToken, setSessionCookie } from "@/lib/auth-session";
+import { hashPassword } from "@/../backend/auth/crypto";
 
 export async function POST(req: NextRequest) {
   try {
@@ -9,6 +10,7 @@ export async function POST(req: NextRequest) {
     const fullName = String(body.fullName || "").trim();
     const email = String(body.email || "").toLowerCase().trim();
     const phone = String(body.phone || "").trim();
+    const password = String(body.password || "").trim();
     const whatsappUpdates = Boolean(body.whatsappUpdates ?? true);
 
     if (!fullName || fullName.length < 2) {
@@ -21,6 +23,10 @@ export async function POST(req: NextRequest) {
 
     if (!phone || phone.replace(/\D/g, "").length < 10) {
       return NextResponse.json({ error: "Please enter a valid 10-digit mobile number." }, { status: 400 });
+    }
+
+    if (password && password.length < 6) {
+      return NextResponse.json({ error: "Password must be at least 6 characters." }, { status: 400 });
     }
 
     // 1. Check if user with this email already exists
@@ -50,6 +56,7 @@ export async function POST(req: NextRequest) {
 
     const userId = `usr_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const username = (fullName.split(" ")[0] || "parent").toLowerCase() + Math.floor(Math.random() * 899 + 100);
+    const passwordHash = password ? hashPassword(password) : undefined;
     const user = {
       id: userId,
       fullName,
@@ -61,6 +68,7 @@ export async function POST(req: NextRequest) {
       isEmailVerified: true,
       consentTimestamp: new Date(),
       createdAt: new Date(),
+      passwordHash,
     };
 
     // Save to dynamic database layer
@@ -119,9 +127,12 @@ export async function POST(req: NextRequest) {
       role: user.role,
     });
 
+    // Strip sensitive fields before returning
+    const { passwordHash: _ph, ...safeUser } = user;
+
     const response = NextResponse.json({
       success: true,
-      user,
+      user: safeUser,
       redirectTo: "/tell-us-child",
     });
 

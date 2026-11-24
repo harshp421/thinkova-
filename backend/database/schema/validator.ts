@@ -152,6 +152,9 @@ export class PreSchemaValidator {
       isEmailVerified: Boolean(data.isEmailVerified),
       consentTimestamp: this.toDate(data.consentTimestamp || new Date(), "User", "consentTimestamp"),
       createdAt: this.toDate(data.createdAt || new Date(), "User", "createdAt"),
+      passwordHash: data.passwordHash ? String(data.passwordHash) : undefined,
+      resetPasswordToken: data.resetPasswordToken ? String(data.resetPasswordToken) : undefined,
+      resetPasswordExpires: data.resetPasswordExpires ? this.toDate(data.resetPasswordExpires, "User", "resetPasswordExpires") : undefined,
     };
   }
 

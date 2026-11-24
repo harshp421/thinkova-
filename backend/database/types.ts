@@ -158,6 +158,9 @@ export interface UserEntity {
   isEmailVerified: boolean;
   consentTimestamp: Date;
   createdAt: Date;
+  passwordHash?: string;
+  resetPasswordToken?: string;
+  resetPasswordExpires?: Date;
 }
 
 export interface StudentEntity {

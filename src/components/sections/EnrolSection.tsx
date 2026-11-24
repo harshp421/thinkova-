@@ -193,11 +193,20 @@ export function EnrolSection() {
           });
         };
 
-        const cashfree = await loadCashfreeSdk();
-        await cashfree.checkout({
-          paymentSessionId: result.paymentSessionId,
-          redirectTarget: "_self",
-        });
+        try {
+          const cashfree = await loadCashfreeSdk();
+          await cashfree.checkout({
+            paymentSessionId: result.paymentSessionId,
+            redirectTarget: "_self",
+          });
+        } catch (sdkErr) {
+          console.warn("[Cashfree SDK fallback to direct hosted payment gateway]", sdkErr);
+          if (result.checkoutUrl) {
+            window.location.href = result.checkoutUrl;
+            return;
+          }
+          throw sdkErr;
+        }
       } else {
         setEnrolSuccess(true);
       }

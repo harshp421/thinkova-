@@ -69,8 +69,50 @@ export async function POST(request: Request) {
       );
     }
 
-    const defaultAmount = orderType === "FULL_PAYMENT" ? 4999 : 2499;
-    const amount = body.amountInRupees || defaultAmount;
+    // [SEC-04] Authoritative Server-Side Pricing Validation:
+    // Determine the authoritative fee from the course database & plan. Prevent client-controlled price tampering.
+    const course = await dbManager.schools.getCourseById(courseId);
+    const catalogCoursePrice = course?.price || 4999;
+
+    let authoritativeAmount: number;
+    if (orderType === "FULL_PAYMENT") {
+      // Allowed full payment tiers: promotional tier (4499), standard catalog (4999), premium tier (5499)
+      const allowedFullTiers = new Set([4499, 4999, 5499, catalogCoursePrice]);
+      if (body.amountInRupees !== undefined) {
+        if (!allowedFullTiers.has(body.amountInRupees)) {
+          return NextResponse.json(
+            {
+              error: `Price tampering detected: requested amount ₹${body.amountInRupees} is not an authorized fee for this course plan.`,
+              code: "PRICE_TAMPERING_DETECTED",
+            },
+            { status: 400 }
+          );
+        }
+        authoritativeAmount = body.amountInRupees;
+      } else {
+        authoritativeAmount = catalogCoursePrice;
+      }
+    } else {
+      // Installments: allowed tiers 2499, 2500, 2750, 3000, or half of course fee
+      const installmentHalf = Math.round(catalogCoursePrice / 2);
+      const allowedInstallmentTiers = new Set([2499, 2500, 2750, 3000, installmentHalf]);
+      if (body.amountInRupees !== undefined) {
+        if (!allowedInstallmentTiers.has(body.amountInRupees)) {
+          return NextResponse.json(
+            {
+              error: `Price tampering detected: requested installment amount ₹${body.amountInRupees} is not an authorized fee.`,
+              code: "PRICE_TAMPERING_DETECTED",
+            },
+            { status: 400 }
+          );
+        }
+        authoritativeAmount = body.amountInRupees;
+      } else {
+        authoritativeAmount = 2499;
+      }
+    }
+
+    const amount = authoritativeAmount;
     const amountInPaise = Math.round(amount * 100);
 
     const orderId = body.orderId || `ord_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;

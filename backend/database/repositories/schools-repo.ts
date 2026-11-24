@@ -27,7 +27,7 @@ export interface ISchoolsRepository {
   getCourseById(courseId: string): Promise<CourseEntity | null>;
   getCoursesByGrade(grade: number): Promise<CourseEntity[]>;
   listAllCourses(trackId?: string): Promise<CourseEntity[]>;
-  upsertCourse(course: CourseEntity): Promise<void>;
+  upsertCourse(course: Partial<CourseEntity>): Promise<void>;
   listAllTracks(): Promise<TrackEntity[]>;
   getTrackById(trackId: string): Promise<TrackEntity | null>;
   upsertTrack(track: TrackEntity): Promise<void>;

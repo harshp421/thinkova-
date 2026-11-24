@@ -8,6 +8,8 @@ import { abandonedCartJob } from "../backend/jobs";
 import { seedDynamicTestData } from "./fixtures";
 import crypto from "crypto";
 
+const nativeFetch = globalThis.fetch;
+
 describe("Cashfree Live Payment & Automated Email Pipeline", () => {
   const originalEnv = { ...process.env };
   const testSecret = "cf_sec_key_abcdef123456";
@@ -19,8 +21,9 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
     process.env.CASHFREE_ENV = "SANDBOX";
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mockFetch = vi.fn().mockImplementation(async (url: string, opts?: any) => {
-      if (url.includes("/orders")) {
+    const mockFetch = vi.fn().mockImplementation(async (url: any, opts?: any) => {
+      const urlStr = typeof url === "string" ? url : (typeof url?.url === "string" ? url.url : (url?.toString ? url.toString() : ""));
+      if (urlStr.includes("cashfree") || urlStr.includes("/orders")) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let body: any = {};
         try {
@@ -28,9 +31,8 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
         } catch {
           // empty
         }
-        return {
-          ok: true,
-          json: async () => ({
+        return new Response(
+          JSON.stringify({
             order_id: body.order_id || "ord_test_cf",
             cf_order_id: 1234567,
             order_status: "ACTIVE",
@@ -38,9 +40,13 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
             order_currency: "INR",
             payment_session_id: "session_live_test_session",
           }),
-        };
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
       }
-      return { ok: true, json: async () => ({}) };
+      return nativeFetch(url, opts);
     });
     vi.stubGlobal("fetch", mockFetch);
 
@@ -50,6 +56,7 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
 
   afterEach(() => {
     process.env = originalEnv;
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 

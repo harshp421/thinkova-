@@ -4,8 +4,31 @@
  */
 
 export const SESSION_COOKIE_NAME = "thinkova_session";
-const SESSION_SECRET =
-  process.env.AUTH_SECRET || "thinkova_secure_parent_session_secret_key_2026";
+const INSECURE_DEFAULT_SECRET = "thinkova_secure_parent_session_secret_key_2026";
+
+/**
+ * [SEC-02] Secure Edge Session Secret Resolver
+ * Strictly forbids using hardcoded fallback keys or weak secrets (< 32 characters) in production.
+ */
+export function getSessionSecretEdge(): string {
+  const secret = process.env.AUTH_SECRET || process.env.SESSION_SECRET;
+
+  if (process.env.NODE_ENV === "production") {
+    if (!secret || secret.trim().length < 32) {
+      throw new Error(
+        "[Security Critical] AUTH_SECRET environment variable is missing or shorter than 32 characters in production. Token verification is refused."
+      );
+    }
+    if (secret.trim() === INSECURE_DEFAULT_SECRET) {
+      throw new Error(
+        "[Security Critical] Known insecure default AUTH_SECRET detected in production. A unique cryptographically secure secret must be configured in environment variables."
+      );
+    }
+    return secret.trim();
+  }
+
+  return secret?.trim() || INSECURE_DEFAULT_SECRET;
+}
 
 export interface AuthSessionPayload {
   userId: string;
@@ -57,9 +80,17 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
  */
 export async function verifySessionTokenEdge(
   token: string,
-  secretKey: string = SESSION_SECRET
+  secretKey?: string
 ): Promise<AuthSessionPayload | null> {
   if (!token || typeof token !== "string") return null;
+
+  let secret: string;
+  try {
+    secret = secretKey || getSessionSecretEdge();
+  } catch (err) {
+    console.error("[AuthEdge] Edge session verification aborted:", err);
+    return null;
+  }
 
   const parts = token.split(".");
   if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
@@ -71,7 +102,7 @@ export async function verifySessionTokenEdge(
 
   try {
     const encoder = new TextEncoder();
-    const keyData = encoder.encode(secretKey);
+    const keyData = encoder.encode(secret);
 
     const cryptoKey = await crypto.subtle.importKey(
       "raw",

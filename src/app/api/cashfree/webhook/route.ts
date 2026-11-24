@@ -39,13 +39,47 @@ export async function POST(request: Request) {
     return NextResponse.json({ status: "ok", message: "Cashfree test ping acknowledged" });
   }
 
-  // 1. Verify Webhook Signature (Dynamic: enforces when credentials exist, allows test pings in simulation)
-  if (cashfreeClient.isConfigured()) {
-    const isValid = cashfreeClient.verifyWebhookSignature(signature, rawBody, timestamp);
-    if (!isValid) {
-      console.warn("[Cashfree Webhook] Rejected incoming payload with invalid HMAC signature.");
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-    }
+  // 1. [SEC-05] Strict Webhook Signature Enforcement:
+  // Reject unverified webhooks if server secret is not configured, or if signature/timestamp is missing or invalid.
+  const secretKey = process.env.CASHFREE_SECRET_KEY;
+  if (!secretKey || secretKey.trim().length === 0) {
+    console.error(
+      "[Cashfree Webhook] Webhook secret key (CASHFREE_SECRET_KEY) is not configured on server. Rejecting unverified payload."
+    );
+    return NextResponse.json(
+      {
+        error: "Webhook signature verification unavailable: CASHFREE_SECRET_KEY is not configured.",
+        code: "ERR_WEBHOOK_SECRET_UNSET",
+      },
+      { status: 401 }
+    );
+  }
+
+  if (!signature || !timestamp) {
+    console.warn(
+      "[Cashfree Webhook] Rejected incoming payload: missing x-webhook-signature or x-webhook-timestamp header."
+    );
+    return NextResponse.json(
+      {
+        error: "Missing required webhook authentication headers (x-webhook-signature, x-webhook-timestamp).",
+        code: "ERR_MISSING_WEBHOOK_SIGNATURE",
+      },
+      { status: 401 }
+    );
+  }
+
+  const isValid = cashfreeClient.verifyWebhookSignature(signature, rawBody, timestamp);
+  if (!isValid) {
+    console.warn(
+      "[Cashfree Webhook] Rejected incoming payload with invalid HMAC signature or expired timestamp."
+    );
+    return NextResponse.json(
+      {
+        error: "Invalid webhook signature or expired timestamp.",
+        code: "ERR_INVALID_WEBHOOK_SIGNATURE",
+      },
+      { status: 401 }
+    );
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

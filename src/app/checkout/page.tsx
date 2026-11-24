@@ -158,7 +158,7 @@ export default function CheckoutPage() {
         return new Promise((resolve, reject) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           if ((window as any).Cashfree) {
-            const mode = (cfData.environment || "SANDBOX").toLowerCase();
+            const mode = (cfData.environment || "PRODUCTION").toLowerCase();
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             resolve((window as any).Cashfree({ mode }));
             return;
@@ -167,7 +167,7 @@ export default function CheckoutPage() {
           script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
           script.async = true;
           script.onload = () => {
-            const mode = (cfData.environment || "SANDBOX").toLowerCase();
+            const mode = (cfData.environment || "PRODUCTION").toLowerCase();
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             resolve((window as any).Cashfree({ mode }));
           };

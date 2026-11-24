@@ -70,12 +70,16 @@ export class DatabaseRouter {
       defaultUri
     ).trim().replace(/^["']|["']$/g, "").trim();
 
+    const isTestEnv = process.env.NODE_ENV === "test" || process.env.VITEST === "true";
+
     // 1. Resolve and register driver for Schools domain
     if (schoolsUri) {
       const driver = this.createDriverFromUri("schools_db", schoolsUri);
       if (driver) {
         this.registerDriver("schools_db", driver);
-        this.domainRoutes.set("schools", "schools_db");
+        if (!isTestEnv) {
+          this.domainRoutes.set("schools", "schools_db");
+        }
       }
     }
 
@@ -84,12 +88,14 @@ export class DatabaseRouter {
       const driver = this.createDriverFromUri("commerce_db", commerceUri);
       if (driver) {
         this.registerDriver("commerce_db", driver);
-        this.domainRoutes.set("commerce", "commerce_db");
+        if (!isTestEnv) {
+          this.domainRoutes.set("commerce", "commerce_db");
+        }
       }
     }
 
     // 3. Fallback to generic default driver if domain specific URIs are absent
-    if (defaultUri && !this.domainRoutes.has("commerce")) {
+    if (defaultUri && !this.domainRoutes.has("commerce") && !isTestEnv) {
       const driver = this.createDriverFromUri("primary_db", defaultUri);
       if (driver) {
         this.registerDriver("primary_db", driver);

@@ -36,8 +36,8 @@ interface AuthContextType {
   students: StudentProfile[];
   activeStudent: StudentProfile | null;
   isLoading: boolean;
-  login: (identifier: string) => Promise<{ success: boolean; redirectTo: string; error?: string }>;
-  signup: (payload: { fullName: string; email: string; phone: string; whatsappUpdates?: boolean }) => Promise<{ success: boolean; redirectTo: string; error?: string }>;
+  login: (identifier: string, password?: string) => Promise<{ success: boolean; redirectTo: string; error?: string }>;
+  signup: (payload: { fullName: string; email: string; phone: string; password?: string; whatsappUpdates?: boolean }) => Promise<{ success: boolean; redirectTo: string; error?: string }>;
   loginWithGoogle: (payload?: { email?: string; name?: string }) => Promise<{ success: boolean; redirectTo: string; error?: string }>;
   logout: () => Promise<void>;
   addStudent: (studentData: { fullName: string; currentGrade: number; schoolName: string; preferredTrack?: string; priorExperience?: string }) => Promise<{ success: boolean; student?: StudentProfile; recommendedEnrollUrl?: string; error?: string }>;
@@ -250,13 +250,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const login = async (identifier: string) => {
+  const login = async (identifier: string, password?: string) => {
     setIsLoading(true);
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier }),
+        body: JSON.stringify({ identifier, password }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -280,7 +280,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signup = async (payload: { fullName: string; email: string; phone: string; whatsappUpdates?: boolean }) => {
+  const signup = async (payload: { fullName: string; email: string; phone: string; password?: string; whatsappUpdates?: boolean }) => {
     setIsLoading(true);
     try {
       const res = await fetch("/api/auth/signup", {

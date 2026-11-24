@@ -267,12 +267,21 @@ export function TabletView() {
             });
           };
 
-          const cashfree = await loadSdk();
-          await cashfree.checkout({
-            paymentSessionId: result.paymentSessionId,
-            redirectTarget: "_self",
-          });
-          return;
+          try {
+            const cashfree = await loadSdk();
+            await cashfree.checkout({
+              paymentSessionId: result.paymentSessionId,
+              redirectTarget: "_self",
+            });
+            return;
+          } catch (sdkErr) {
+            console.warn("[Cashfree SDK fallback to direct hosted payment gateway]", sdkErr);
+            if (result.checkoutUrl) {
+              window.location.href = result.checkoutUrl;
+              return;
+            }
+            throw sdkErr;
+          }
         }
       }
       setEnrolSubmitted(true);

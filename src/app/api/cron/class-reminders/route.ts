@@ -187,11 +187,22 @@ async function handleClassReminders(
 }
 
 export async function GET(request: NextRequest) {
-  // Optional security check if CRON_SECRET configured
-  const authHeader = request.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && authHeader && authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const authHeader = request.headers.get("authorization")?.trim();
+  const internalSecret =
+    request.headers.get("x-internal-secret")?.trim() ||
+    request.headers.get("x-api-key")?.trim();
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  const internalKey = process.env.INTERNAL_API_KEY?.trim();
+
+  if (cronSecret || internalKey) {
+    const isCronMatch = cronSecret && authHeader === `Bearer ${cronSecret}`;
+    const isInternalMatch = internalKey && authHeader === `Bearer ${internalKey}`;
+    const isHeaderMatch =
+      internalSecret && (internalSecret === cronSecret || internalSecret === internalKey);
+
+    if (!isCronMatch && !isInternalMatch && !isHeaderMatch) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
   }
 
   const { searchParams } = request.nextUrl;
@@ -205,10 +216,22 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const authHeader = request.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && authHeader && authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const authHeader = request.headers.get("authorization")?.trim();
+  const internalSecret =
+    request.headers.get("x-internal-secret")?.trim() ||
+    request.headers.get("x-api-key")?.trim();
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  const internalKey = process.env.INTERNAL_API_KEY?.trim();
+
+  if (cronSecret || internalKey) {
+    const isCronMatch = cronSecret && authHeader === `Bearer ${cronSecret}`;
+    const isInternalMatch = internalKey && authHeader === `Bearer ${internalKey}`;
+    const isHeaderMatch =
+      internalSecret && (internalSecret === cronSecret || internalSecret === internalKey);
+
+    if (!isCronMatch && !isInternalMatch && !isHeaderMatch) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
   }
 
   let body: Record<string, unknown> = {};

@@ -46,7 +46,7 @@ function LoginForm() {
     setShowSignupPrompt(false);
     setIsLoading(true);
 
-    const result = await login(email.trim());
+    const result = await login(email.trim(), password);
     setIsLoading(false);
 
     if (result.success) {
@@ -217,13 +217,12 @@ function LoginForm() {
             </div>
 
             <div className="text-left pt-0.5">
-              <button
-                type="button"
-                onClick={() => alert("Password reset link sent to " + email)}
+              <Link
+                href={email ? `/forgot-password?email=${encodeURIComponent(email.trim())}` : "/forgot-password"}
                 className="text-xs font-semibold text-[#FF6026] hover:underline"
               >
                 Forgot password?
-              </button>
+              </Link>
             </div>
 
             <button

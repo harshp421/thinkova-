@@ -72,6 +72,14 @@ export interface ICommerceRepository {
   getStudentsByParentId(parentUserId: string): Promise<StudentEntity[]>;
   getEnrollmentsByStudentId(studentId: string): Promise<EnrollmentEntity[]>;
   getEnrollmentsByBatchId(batchId: string): Promise<EnrollmentEntity[]>;
+  getActiveLearningEnrollments(): Promise<
+    Array<{
+      enrollment: EnrollmentEntity;
+      student: StudentEntity;
+      user: UserEntity;
+      progress?: CourseProgressEntity | null;
+    }>
+  >;
   getAssessmentsByBatchId(batchId: string): Promise<AssessmentEntity[]>;
   getAssessmentsByStudentId(studentId: string): Promise<AssessmentEntity[]>;
   deleteStudent(studentId: string): Promise<void>;
@@ -359,6 +367,55 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
 
   async getEnrollmentsByBatchId(batchId: string): Promise<EnrollmentEntity[]> {
     return await this.router.find<EnrollmentEntity>("enrollments", { cohortBatchId: batchId }, undefined, "commerce");
+  }
+
+  async getActiveLearningEnrollments(): Promise<
+    Array<{
+      enrollment: EnrollmentEntity;
+      student: StudentEntity;
+      user: UserEntity;
+      progress?: CourseProgressEntity | null;
+    }>
+  > {
+    const allEnrollments = await this.router.find<EnrollmentEntity>("enrollments", {}, undefined, "commerce");
+
+    // Also look up paid orders to capture confirmed enrolled learners
+    const paidOrders = await this.router.find<OrderEntity>("orders", { status: "PAID" }, undefined, "commerce");
+    const paidEnrollmentIds = new Set(paidOrders.map((o) => o.enrollmentId));
+
+    const activeList = allEnrollments.filter((e) => {
+      if (e.status === "DROPPED") return false;
+      return e.status === "ENROLLED" || paidEnrollmentIds.has(e.id);
+    });
+
+    const results: Array<{
+      enrollment: EnrollmentEntity;
+      student: StudentEntity;
+      user: UserEntity;
+      progress?: CourseProgressEntity | null;
+    }> = [];
+
+    for (const enrollment of activeList) {
+      const student = await this.router.get<StudentEntity>("students", enrollment.studentId, "commerce");
+      if (!student) continue;
+
+      const user = await this.router.get<UserEntity>("users", student.parentUserId, "commerce");
+      // Must have valid registered parent phone number in database
+      if (!user || !user.phone || user.phone.replace(/\D/g, "").length < 10) continue;
+
+      const progress = enrollment.courseId
+        ? await this.getCourseProgressByStudent(student.id, enrollment.courseId)
+        : null;
+
+      results.push({
+        enrollment,
+        student,
+        user,
+        progress,
+      });
+    }
+
+    return results;
   }
 
   async getAssessmentsByBatchId(batchId: string): Promise<AssessmentEntity[]> {
