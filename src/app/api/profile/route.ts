@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionFromRequest, createSessionToken, setSessionCookie } from "@/lib/auth-session";
 import { dbManager } from "@/../backend/database/client";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function sanitizeUser(u: any) {
+  if (!u) return u;
+  const { passwordHash, resetPasswordToken, resetPasswordExpires, ...safe } = u;
+  return safe;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const session = await getSessionFromRequest(req);
@@ -18,7 +25,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      user,
+      user: sanitizeUser(user),
       students,
     });
   } catch (err: unknown) {
@@ -104,7 +111,7 @@ export async function POST(req: NextRequest) {
     const response = NextResponse.json({
       success: true,
       message: "Profile updated successfully.",
-      user: updatedUser,
+      user: sanitizeUser(updatedUser),
       student: updatedStudent,
       reminders,
     });

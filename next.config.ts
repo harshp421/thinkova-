@@ -1,17 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  experimental: {
-    agentUpgrade: "security",
-  },
+  output: "standalone",
   reactStrictMode: true,
   poweredByHeader: false,
   devIndicators: false,
   serverExternalPackages: [
     "@azure/identity",
-    "open",
-    "powershell-utils",
-    "wsl-utils",
+    "@microsoft/microsoft-graph-client",
   ],
   images: {
     formats: ["image/webp"],
@@ -33,18 +29,6 @@ const nextConfig: NextConfig = {
         permanent: false,
       },
     ];
-  },
-  async rewrites() {
-    if (process.env.BACKEND_API_URL) {
-      const backendUrl = process.env.BACKEND_API_URL.replace(/\/$/, "");
-      return [
-        {
-          source: "/api/:path*",
-          destination: `${backendUrl}/api/:path*`,
-        },
-      ];
-    }
-    return [];
   },
 };
 

@@ -15,6 +15,18 @@ export async function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
   // =========================================================================
+  // 0. BYPASS AZURE SWA INTERNAL HEALTH & WARM-UP CHECKS
+  // Guarantees deployment warm-up probes (.swa/health, live) succeed instantly.
+  // =========================================================================
+  if (
+    pathname.startsWith("/.swa") ||
+    pathname.includes("health") ||
+    pathname === "/favicon.ico"
+  ) {
+    return NextResponse.next();
+  }
+
+  // =========================================================================
   // 1. RATE LIMITING ON PUBLIC AUTH & PAYMENT ENDPOINTS
   // Prevents bot signup attacks, credential brute-forcing, and carding abuse.
   // =========================================================================
@@ -155,15 +167,22 @@ export { proxy as middleware };
  */
 export const config = {
   matcher: [
+    "/tutor",
     "/tutor/:path*",
     "/api/tutor/:path*",
+    "/learning",
     "/learning/:path*",
+    "/profile",
     "/profile/:path*",
+    "/who-is-learning",
     "/who-is-learning/:path*",
+    "/tell-us-child",
     "/tell-us-child/:path*",
-    "/api/auth/signup",
-    "/api/auth/login",
+    "/api/auth/:path*",
     "/api/cashfree/order",
     "/api/cashfree/order/:path*",
+    "/api/school-pack",
+    "/api/events",
+    "/api/notifications/status",
   ],
 };

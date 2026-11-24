@@ -41,6 +41,29 @@ export async function GET(request: Request) {
   }));
 
   // Fetch persistent notifications from MongoDB Atlas (with in-memory ledger fallback)
+  // [SEC-10] PII Masking: Mask email addresses and phone numbers on public diagnostics unless authorized via CRON_SECRET
+  const authHeader = request.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET;
+  const isAuthorized = Boolean(cronSecret && authHeader === `Bearer ${cronSecret}`);
+
+  const maskEmail = (email?: string) => {
+    if (!email) return "";
+    if (isAuthorized) return email;
+    const parts = email.split("@");
+    if (parts.length !== 2) return "***";
+    const name = parts[0] || "";
+    const visible = name.slice(0, 2);
+    return `${visible}***@${parts[1]}`;
+  };
+
+  const maskPhone = (phone?: string) => {
+    if (!phone) return "";
+    if (isAuthorized) return phone;
+    const clean = phone.replace(/\s+/g, "");
+    if (clean.length < 6) return "***";
+    return `${clean.slice(0, 3)}****${clean.slice(-3)}`;
+  };
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recentNotifications: any[] = await defaultDispatcher.getPersistentNotifications({ limit: 20 });
   const emailOutbox = recentNotifications.filter((n: any) => n.channel === "EMAIL");
@@ -57,7 +80,7 @@ export async function GET(request: Request) {
       totalWhatsAppSent: whatsAppOutbox.length,
       emails: emailOutbox.map((e: any) => ({
         id: e.id,
-        to: e.recipient || e.to,
+        to: maskEmail(e.recipient || e.to),
         subject: e.subject,
         status: e.status,
         transport: e.transport,
@@ -65,7 +88,7 @@ export async function GET(request: Request) {
       })),
       whatsApp: whatsAppOutbox.map((w: any) => ({
         id: w.id,
-        to: w.recipient || w.to,
+        to: maskPhone(w.recipient || w.to),
         template: w.templateName,
         status: w.status,
         transport: w.transport,
