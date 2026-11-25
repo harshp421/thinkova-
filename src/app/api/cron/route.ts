@@ -1,8 +1,53 @@
+import crypto from "crypto";
 import { NextResponse } from "next/server";
 import { getScheduler } from "../../../../backend/cron/scheduler";
 import { defaultDispatcher } from "../../../../backend/notifications/dispatcher";
 
 export const runtime = "nodejs";
+
+function safeTokenEquals(provided: string | undefined, expected: string | undefined): boolean {
+  if (!provided || !expected) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * Verifies caller authorization for cron execution and unmasked diagnostics.
+ * Fails closed (503) if neither CRON_SECRET nor INTERNAL_API_KEY is configured.
+ */
+function verifyCronAuthorization(request: Request): NextResponse | null {
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  const internalKey = process.env.INTERNAL_API_KEY?.trim();
+
+  if (!cronSecret && !internalKey) {
+    return NextResponse.json(
+      {
+        error: "Cron execution unavailable: CRON_SECRET is not configured on the server.",
+        code: "ERR_CRON_SECRET_UNSET",
+      },
+      { status: 503 }
+    );
+  }
+
+  const authHeader = request.headers.get("authorization")?.trim();
+  const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : undefined;
+  const internalSecret =
+    request.headers.get("x-internal-secret")?.trim() ||
+    request.headers.get("x-api-key")?.trim();
+
+  const isAuthorized =
+    safeTokenEquals(bearerToken, cronSecret) ||
+    safeTokenEquals(bearerToken, internalKey) ||
+    safeTokenEquals(internalSecret, cronSecret) ||
+    safeTokenEquals(internalSecret, internalKey);
+
+  if (!isAuthorized) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  return null;
+}
 
 /**
  * GET /api/cron
@@ -16,10 +61,9 @@ export async function GET(request: Request) {
   const scheduler = getScheduler();
 
   if (shouldRun) {
-    const authHeader = request.headers.get("authorization");
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const authError = verifyCronAuthorization(request);
+    if (authError) {
+      return authError;
     }
 
     const results = await scheduler.runAllJobs();
@@ -41,10 +85,8 @@ export async function GET(request: Request) {
   }));
 
   // Fetch persistent notifications from MongoDB Atlas (with in-memory ledger fallback)
-  // [SEC-10] PII Masking: Mask email addresses and phone numbers on public diagnostics unless authorized via CRON_SECRET
-  const authHeader = request.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET;
-  const isAuthorized = Boolean(cronSecret && authHeader === `Bearer ${cronSecret}`);
+  // [SEC-10] PII Masking: Mask email addresses and phone numbers on public diagnostics unless authorized via CRON_SECRET / INTERNAL_API_KEY
+  const isAuthorized = verifyCronAuthorization(request) === null;
 
   const maskEmail = (email?: string) => {
     if (!email) return "";
@@ -104,11 +146,9 @@ export async function GET(request: Request) {
  * Body: { "jobId": "job.abandoned_cart_recovery" } or { "runAll": true }
  */
 export async function POST(request: Request) {
-  // Optional security check
-  const authHeader = request.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const authError = verifyCronAuthorization(request);
+  if (authError) {
+    return authError;
   }
 
   let body: { jobId?: string; runAll?: boolean };

@@ -67,9 +67,6 @@ export default function EventsPage() {
         body: JSON.stringify({
           action: "remind",
           eventId: event.id,
-          userEmail: user.email,
-          userPhone: user.phone,
-          userName: user.fullName || user.username,
         }),
       });
 

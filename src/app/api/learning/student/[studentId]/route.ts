@@ -1,3 +1,4 @@
+import { requireStudentAccess } from "@/lib/student-access";
 import { NextRequest, NextResponse } from "next/server";
 import { dbManager } from "@/../backend/database/client";
 import { allCourses, getCourseById } from "@/data/tracks";
@@ -8,6 +9,8 @@ export async function GET(
 ) {
   try {
     const { studentId } = await params;
+    const denied = await requireStudentAccess(req, studentId);
+    if (denied) return denied;
     const requestedCourseId = req.nextUrl.searchParams.get("courseId") || undefined;
 
     // 1. Fetch student from MongoDB Atlas
@@ -22,7 +25,7 @@ export async function GET(
       (e) => e.status === "ENROLLED" || e.status === "PENDING_PAYMENT"
     );
     const activeEnrollment = requestedCourseId
-      ? activeEnrollments.find((e) => e.courseId === requestedCourseId) || activeEnrollments[0]
+      ? activeEnrollments.find((e) => e.courseId === requestedCourseId)
       : activeEnrollments.find((e) => e.status === "ENROLLED") || activeEnrollments[0];
 
     // If the student has no active enrollments yet, return a clean unenrolled state

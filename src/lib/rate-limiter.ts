@@ -43,6 +43,11 @@ export const RATE_LIMIT_RULES: Record<string, RateLimitRule> = {
     maxRequests: 10,
     windowSeconds: 60,
   },
+  // Max 5 refund requests per IP per minute (prevents refund abuse / gateway flooding)
+  "/api/cashfree/refund": {
+    maxRequests: 5,
+    windowSeconds: 60,
+  },
   // Max 3 school partnership lead inquiries per IP per minute (prevents CRM & email spam)
   "/api/school-pack": {
     maxRequests: 3,

@@ -1,3 +1,4 @@
+import { getSessionFromRequest } from "@/lib/auth-session";
 import { NextRequest, NextResponse } from "next/server";
 import { dbManager } from "@/../backend/database/client";
 import { StudentEntity, EnrollmentEntity } from "@/../backend/database/types";
@@ -6,24 +7,14 @@ export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = req.nextUrl;
-    const tutorId = searchParams.get("tutorId") || "tutor_lead_01";
-
-    // 1. Fetch Tutor Profile from MongoDB Atlas
-    let tutor = await dbManager.schools.getTutor(tutorId);
-    if (!tutor) {
-      const allTutors = await dbManager.schools.listAllTutors();
-      if (allTutors.length > 0 && allTutors[0]) {
-        tutor = allTutors[0];
-      }
-    }
-
-    // 2. Fetch Batches for this tutor or all active batches
-    const effectiveTutorId = tutor?.id || tutorId;
-    let batches = await dbManager.schools.listBatchesByTutorId(effectiveTutorId);
-    if (!batches || batches.length === 0) {
-      batches = await dbManager.schools.listAllBatches();
-    }
+    const session = await getSessionFromRequest(req);
+    if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    if (!["SUPER_ADMIN", "TUTOR"].includes(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const tutors = await dbManager.schools.listAllTutors();
+    const tutor = session.role === "TUTOR"
+      ? tutors.find(item => item.email.toLowerCase() === session.email.toLowerCase())
+      : tutors.find(item => item.id === req.nextUrl.searchParams.get("tutorId")) || tutors[0];
+    const batches = tutor ? await dbManager.schools.listBatchesByTutorId(tutor.id) : [];
 
     // 3. For the active batch, resolve School details
     const activeBatch = batches && batches.length > 0 ? batches[0] : null;

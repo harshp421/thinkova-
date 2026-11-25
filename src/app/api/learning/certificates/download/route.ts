@@ -1,11 +1,19 @@
+import { dbManager } from "@/../backend/database/client";
+import { requireStudentAccess } from "@/lib/student-access";
 import { NextRequest, NextResponse } from "next/server";
 import { getStudentProgressData } from "@/data/progress-data";
 
+function escapeXml(value: string) {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
 export async function GET(req: NextRequest) {
   try {
-    const studentId = req.nextUrl.searchParams.get("studentId") || "learner";
+    const studentId = req.nextUrl.searchParams.get("studentId") || "";
+    const denied = await requireStudentAccess(req, studentId);
+    if (denied) return denied;
     const courseId = req.nextUrl.searchParams.get("courseId") || "ai-for-young-creators";
-    const studentName = req.nextUrl.searchParams.get("studentName") || "Learner";
+    const studentName = (await dbManager.commerce.getStudentById(studentId))!.fullName;
 
     const data = getStudentProgressData(studentId, courseId, studentName);
     const cert = data.certificate;
@@ -57,7 +65,7 @@ export async function GET(req: NextRequest) {
   <text x="600" y="295" font-family="system-ui, -apple-system, sans-serif" font-size="14" fill="#5A5F6B" text-anchor="middle">This certifies that</text>
 
   <!-- Student Name -->
-  <text x="600" y="370" font-family="Georgia, serif" font-size="46" font-weight="bold" fill="#FF6B2C" text-anchor="middle">${studentName}</text>
+  <text x="600" y="370" font-family="Georgia, serif" font-size="46" font-weight="bold" fill="#FF6B2C" text-anchor="middle">${escapeXml(String(studentName))}</text>
   <line x1="340" y1="395" x2="860" y2="395" stroke="#D5D0C5" stroke-width="1.5" />
 
   <!-- Course Completion Prose -->
@@ -81,8 +89,8 @@ export async function GET(req: NextRequest) {
   <!-- Tutor Signature -->
   <g transform="translate(260, 690)">
     <line x1="0" y1="0" x2="200" y2="0" stroke="#0B0C0F" stroke-width="1.5" />
-    <text x="100" y="-10" font-family="'Brush Script MT', cursive, Georgia, serif" font-size="24" fill="#FF6B2C" text-anchor="middle">${tutorStr}</text>
-    <text x="100" y="20" font-family="system-ui, sans-serif" font-size="13" font-weight="bold" fill="#0B0C0F" text-anchor="middle">${tutorStr}</text>
+    <text x="100" y="-10" font-family="'Brush Script MT', cursive, Georgia, serif" font-size="24" fill="#FF6B2C" text-anchor="middle">${escapeXml(String(tutorStr))}</text>
+    <text x="100" y="20" font-family="system-ui, sans-serif" font-size="13" font-weight="bold" fill="#0B0C0F" text-anchor="middle">${escapeXml(String(tutorStr))}</text>
     <text x="100" y="38" font-family="system-ui, sans-serif" font-size="11" fill="#5A5F6B" text-anchor="middle">Lead AI Tutor, ThinkOva Labs</text>
   </g>
 
@@ -98,13 +106,13 @@ export async function GET(req: NextRequest) {
   <!-- Issue Date & Verification Code -->
   <g transform="translate(940, 690)">
     <line x1="-200" y1="0" x2="0" y2="0" stroke="#0B0C0F" stroke-width="1.5" />
-    <text x="-100" y="-10" font-family="system-ui, sans-serif" font-size="14" font-weight="600" fill="#0B0C0F" text-anchor="middle">${dateStr}</text>
+    <text x="-100" y="-10" font-family="system-ui, sans-serif" font-size="14" font-weight="600" fill="#0B0C0F" text-anchor="middle">${escapeXml(String(dateStr))}</text>
     <text x="-100" y="20" font-family="system-ui, sans-serif" font-size="13" font-weight="bold" fill="#0B0C0F" text-anchor="middle">Date of Issuance</text>
-    <text x="-100" y="38" font-family="monospace" font-size="10" fill="#5A5F6B" text-anchor="middle">${certCode}</text>
+    <text x="-100" y="38" font-family="monospace" font-size="10" fill="#5A5F6B" text-anchor="middle">${escapeXml(String(certCode))}</text>
   </g>
 
   <!-- Footer security line -->
-  <text x="600" y="780" font-family="system-ui, sans-serif" font-size="10" fill="#A7ACB8" text-anchor="middle">Verify credential authenticity online at thinkova.ai/verify?code=${certCode}</text>
+  <text x="600" y="780" font-family="system-ui, sans-serif" font-size="10" fill="#A7ACB8" text-anchor="middle">Verify credential authenticity online at thinkova.ai/verify?code=${escapeXml(String(certCode))}</text>
 </svg>`;
 
     const fileName = `ThinkOva-Certificate-${studentName.replace(/\s+/g, "-")}.svg`;
@@ -114,7 +122,7 @@ export async function GET(req: NextRequest) {
       headers: {
         "Content-Type": "image/svg+xml; charset=utf-8",
         "Content-Disposition": `attachment; filename="${fileName}"`,
-        "Cache-Control": "public, max-age=3600",
+        "Cache-Control": "private, no-store",
       },
     });
   } catch (err: unknown) {

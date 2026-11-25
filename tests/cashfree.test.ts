@@ -54,6 +54,7 @@ describe("Cashfree Payment Gateway Integration", () => {
     process.env.CASHFREE_APP_ID = "CF_APP_TEST_123456";
     process.env.CASHFREE_SECRET_KEY = "cf_sec_key_abcdef123456";
     process.env.CASHFREE_ENV = "SANDBOX";
+    process.env.CASHFREE_SITE_URL = "https://sandbox.example.test";
 
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,

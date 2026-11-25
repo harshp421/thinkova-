@@ -1,9 +1,12 @@
+import { requireStudentAccess } from "@/lib/student-access";
 import { NextRequest, NextResponse } from "next/server";
 import { getStudentProgressData } from "@/data/progress-data";
 
 export async function GET(req: NextRequest) {
   try {
-    const studentId = req.nextUrl.searchParams.get("studentId") || "learner";
+    const studentId = req.nextUrl.searchParams.get("studentId") || "";
+    const denied = await requireStudentAccess(req, studentId);
+    if (denied) return denied;
     const courseId = req.nextUrl.searchParams.get("courseId") || "ai-for-young-creators";
     const studentName = req.nextUrl.searchParams.get("studentName") || "Learner";
 
@@ -37,7 +40,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const studentId = String(body.studentId || "learner").trim();
+    const studentId = String(body.studentId || "").trim();
+    const denied = await requireStudentAccess(req, studentId);
+    if (denied) return denied;
     const courseId = String(body.courseId || "ai-for-young-creators").trim();
     const studentName = String(body.studentName || "Learner").trim();
     const action = String(body.action || "verify").trim();

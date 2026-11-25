@@ -9,24 +9,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ authenticated: false }, { status: 401 });
     }
 
-    let user = await dbManager.commerce.getUserById(session.userId);
-    if (!user) {
-      // Re-create user from verified HMAC-SHA256 session token to prevent false 401 on server reloads
-      const restoredUser = {
-        id: session.userId,
-        email: session.email,
-        username: session.username || session.email.split("@")[0] || "parent",
-        fullName: session.fullName || "Parent",
-        phone: session.phone || "",
-        role: session.role || "PARENT",
-        isPhoneVerified: Boolean(session.phone),
-        isEmailVerified: true,
-        consentTimestamp: new Date(),
-        createdAt: new Date(session.createdAt || Date.now()),
-      };
-      await dbManager.commerce.upsertUser(restoredUser);
-      user = restoredUser;
-    }
+    const account = await dbManager.commerce.getUserById(session.userId);
+    if (!account) return NextResponse.json({ authenticated: false }, { status: 401 });
+    const { id, fullName, username, email, phone, role } = account;
+    const user = { id, fullName, username, email, phone, role };
 
     const rawStudents = await dbManager.commerce.getStudentsByParentId(user.id);
     const students = await Promise.all(

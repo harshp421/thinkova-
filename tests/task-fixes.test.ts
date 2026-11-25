@@ -1,3 +1,4 @@
+import { createTestSession } from "./fixtures";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { POST as postEvents } from "../src/app/api/events/route";
@@ -150,11 +151,7 @@ describe("8 Core Tasks - Verification & Integration Tests", () => {
     });
 
     const unauthEnrolRes = await postEnrol(unauthEnrolReq);
-    expect(unauthEnrolRes.status).toBe(401);
-    const unauthEnrolData = await unauthEnrolRes.json();
-    expect(unauthEnrolData.error).toContain("Please sign up or log in");
-
-    // Authenticated enrolment request succeeds
+    expect(unauthEnrolRes.status).toBe(410);
     const authEnrolReq = new NextRequest("http://localhost:3000/api/courses/enrol", {
       method: "POST",
       headers: {
@@ -170,11 +167,8 @@ describe("8 Core Tasks - Verification & Integration Tests", () => {
     });
 
     const authEnrolRes = await postEnrol(authEnrolReq);
-    expect(authEnrolRes.status).toBe(200);
-    const authEnrolData = await authEnrolRes.json();
-    expect(authEnrolData.success).toBe(true);
-    expect(authEnrolData.enrollment.currentLevel).toBe(1);
-    expect(authEnrolData.progress.completionPercentage).toBe(0); // Starts fresh
+    expect(authEnrolRes.status).toBe(410);
+    expect(await dbManager.commerce.getEnrollmentsByStudentId(studentId)).toHaveLength(0);
   });
 
   it("New Signup flow: dispatches welcome email & WhatsApp and creates user with real phone", async () => {
@@ -215,6 +209,11 @@ describe("8 Core Tasks - Verification & Integration Tests", () => {
     const progressReq = new NextRequest(
       `http://localhost:3000/api/learning/progress?studentId=${newStudentId}&courseId=robotics-starter`
     );
+    expect((await getProgress(progressReq)).status).toBe(401);
+    const other = await createTestSession({ userId: "other-family", email: "other@example.test", fullName: "Other", username: "other", role: "PARENT" });
+    progressReq.headers.set("Authorization", "Bearer " + other);
+    expect((await getProgress(progressReq)).status).toBe(404);
+    progressReq.headers.set("Authorization", "Bearer " + testUserToken);
     const progressRes = await getProgress(progressReq);
     expect(progressRes.status).toBe(200);
     const progressData = await progressRes.json();
@@ -258,6 +257,7 @@ describe("8 Core Tasks - Verification & Integration Tests", () => {
     process.env.CASHFREE_APP_ID = "CF_APP_TEST_12345";
     process.env.CASHFREE_SECRET_KEY = "cf_sec_test_67890";
     process.env.CASHFREE_ENV = "SANDBOX";
+    process.env.CASHFREE_SITE_URL = "https://sandbox.example.test";
 
     const originalFetch = global.fetch;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -289,11 +289,12 @@ describe("8 Core Tasks - Verification & Integration Tests", () => {
         }),
       });
 
+      orderReq.headers.set("Authorization", "Bearer " + testUserToken);
       const orderRes = await postCashfreeOrder(orderReq);
       expect(orderRes.status).toBe(200);
       const data = await orderRes.json();
       expect(data.status).toBe("success");
-      expect(data.orderId).toBe("ord_reuse_test_101");
+      expect(data.orderId).toMatch(/^ord_/);
       expect(data.paymentSessionId).toBe("session_mock_123");
 
       // Verify the order linked to the existing user ID, not a newly generated ID

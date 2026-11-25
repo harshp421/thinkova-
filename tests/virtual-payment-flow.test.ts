@@ -1,10 +1,13 @@
+import { NextRequest } from "next/server";
+import { GET as getCourses } from "../src/app/api/courses/route";
+import { authenticateParent } from "./fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as createOrderHandler } from "../src/app/api/cashfree/order/route";
 import { POST as webhookHandler } from "../src/app/api/cashfree/webhook/route";
 import { dbManager } from "../backend/database/client";
 import { defaultDispatcher } from "../backend/notifications/dispatcher";
 import { CronEngine } from "../backend/cron/engine";
-import { abandonedCartJob } from "../backend/jobs";
+import { enrollmentSuccessJob, abandonedCartJob } from "../backend/jobs";
 import { seedDynamicTestData } from "./fixtures";
 import crypto from "crypto";
 
@@ -19,6 +22,7 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
     process.env.CASHFREE_APP_ID = "CF_APP_TEST_123456";
     process.env.CASHFREE_SECRET_KEY = testSecret;
     process.env.CASHFREE_ENV = "SANDBOX";
+    process.env.CASHFREE_SITE_URL = "https://sandbox.example.test";
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mockFetch = vi.fn().mockImplementation(async (url: any, opts?: any) => {
@@ -60,6 +64,37 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
     vi.restoreAllMocks();
   });
 
+  it.each([
+    ["FULL", 5199],
+    ["INSTALLMENTS", 3000],
+  ])("uses the quoted Robotics Starter amount for %s", async (paymentPlan, amount) => {
+    const courseId = "robotics-starter";
+    const course = await dbManager.schools.getCourseById(courseId);
+    if (!course) throw new Error("Expected the seeded robotics course");
+    await dbManager.schools.upsertCourse({ ...course, price: 5199 });
+
+    const catalog = await getCourses(new NextRequest(`https://example.test/api/courses?courseId=${courseId}`));
+    expect((await catalog.json()).course.price).toBe(5199);
+
+    const orderRequest = () => new Request("https://example.test/api/cashfree/order", {
+      method: "POST",
+      body: JSON.stringify({
+        courseId, paymentPlan, amountInRupees: amount,
+        studentName: "Test Student", parentName: "Test Parent",
+        parentEmail: "quote-parent@example.test", parentPhone: "9876543210", schoolUid: "TEST",
+      }),
+    });
+    expect((await createOrderHandler(orderRequest())).status).toBe(401);
+
+    const request = orderRequest();
+    await authenticateParent(request);
+    const response = await createOrderHandler(request);
+    expect(response.status).toBe(200);
+    const { orderId, enrollmentId } = await response.json();
+    expect((await dbManager.commerce.getOrderById(orderId))?.amountInPaise).toBe(amount * 100);
+    expect((await dbManager.commerce.getEnrollmentById(enrollmentId))?.courseId).toBe(courseId);
+  });
+
   it("1. Creates a real Cashfree gateway order and stores user, student, and order in dynamic database", async () => {
     const orderPayload = {
       studentName: "Aarav Sharma",
@@ -69,7 +104,8 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
       schoolUid: "10245",
       grade: 6,
       paymentPlan: "FULL",
-      amountInRupees: 4499,
+      courseId: "ai-study-helper",
+        amountInRupees: 4499,
     };
 
     const req = new Request("http://localhost:3000/api/cashfree/order", {
@@ -78,6 +114,7 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
       body: JSON.stringify(orderPayload),
     });
 
+    await authenticateParent(req);
     const res = await createOrderHandler(req);
     expect(res.status).toBe(200);
 
@@ -115,10 +152,12 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
         schoolUid: "DPS-PUN-01",
         grade: 7,
         paymentPlan: "FULL",
+        courseId: "ai-study-helper",
         amountInRupees: 4499,
       }),
     });
 
+    await authenticateParent(orderReq);
     const orderRes = await createOrderHandler(orderReq);
     expect(orderRes.status).toBe(200);
     const orderData = await orderRes.json();
@@ -137,6 +176,7 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
         payment: {
           cf_payment_id: `cf_pay_${Date.now()}`,
           payment_status: "SUCCESS",
+          payment_currency: "INR",
           payment_amount: 4499,
           payment_time: new Date().toISOString(),
           payment_method: { upi: { channel: "gpay", upi_id: "suresh@okhdfc" } },
@@ -161,7 +201,25 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
       body: rawBody,
     });
 
-    const webhookRes = await webhookHandler(webhookReq);
+    async function deliver(event: typeof webhookPayload) {
+      const body = JSON.stringify(event);
+      const signature = crypto.createHmac("sha256", testSecret).update(timestamp + body).digest("base64");
+      return webhookHandler(new Request(webhookReq.url, {
+        method: "POST", headers: { "x-webhook-timestamp": timestamp, "x-webhook-signature": signature }, body,
+      }));
+    }
+    const mismatch = structuredClone(webhookPayload);
+    mismatch.data.payment.payment_currency = "USD";
+    expect((await deliver(mismatch)).status).toBe(422);
+    expect((await dbManager.commerce.getOrderById(orderId))?.status).toBe("AWAITING_PAYMENT");
+
+    const duplicate = webhookReq.clone();
+    const [webhookRes, duplicateResponse] = await Promise.all([webhookHandler(webhookReq), webhookHandler(duplicate)]);
+    expect(duplicateResponse.status).toBe(200);
+    const delayedFailure = structuredClone(webhookPayload);
+    delayedFailure.type = "PAYMENT_FAILED_WEBHOOK";
+    delayedFailure.data.payment.payment_status = "FAILED";
+    expect((await deliver(delayedFailure)).status).toBe(200);
     expect(webhookRes.status).toBe(200);
 
     const webhookData = await webhookRes.json();
@@ -175,7 +233,9 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
     const updatedEnrollment = await dbManager.commerce.getEnrollmentById(updatedOrder!.enrollmentId);
     expect(updatedEnrollment?.status).toBe("ENROLLED");
 
-    // D. Verify Automated Email Generation
+    const scheduler = new CronEngine();
+    scheduler.registerJob(enrollmentSuccessJob);
+    await scheduler.runJobNow(enrollmentSuccessJob.id);
     const emails = defaultDispatcher.getEmailOutbox("suresh.verma@example.com");
     expect(emails.length).toBe(1);
 
@@ -212,10 +272,12 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
         schoolUid: "10245",
         grade: 5,
         paymentPlan: "FULL",
+        courseId: "ai-study-helper",
         amountInRupees: 4499,
       }),
     });
 
+    await authenticateParent(orderReq);
     const orderRes = await createOrderHandler(orderReq);
     expect(orderRes.status).toBe(200);
     const orderData = await orderRes.json();
@@ -254,28 +316,13 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
       body: rawBody,
     });
 
+    const duplicate = webhookReq.clone();
     const webhookRes = await webhookHandler(webhookReq);
+    expect((await webhookHandler(duplicate)).status).toBe(200);
     expect(webhookRes.status).toBe(200);
 
-    const failData = await webhookRes.json();
-    expect(failData.event).toBe("PAYMENT_FAILED");
-
-    // Verify DB updated to FAILED
-    const order = await dbManager.commerce.getOrderById(orderId);
-    expect(order?.status).toBe("FAILED");
-    expect(order?.failureReason).toContain("declined");
-
-    // Verify Automated Payment Failure email alert generated
-    const emails = defaultDispatcher.getEmailOutbox("karthik.iyer@example.com");
-    expect(emails.length).toBe(1);
-
-    const email = emails[0]!;
-    expect(email.subject).toContain("Action Required");
-    expect(email.subject).toContain("unsuccessful");
-    expect(email.html).toContain("Karthik Iyer");
-    expect(email.html).toContain("Ananya Iyer");
-    expect(email.html).toContain("Insufficient funds or UPI limit exceeded");
-    expect(email.html).toContain(order!.checkoutUrl);
+    expect((await dbManager.commerce.getOrderById(orderId))?.status).toBe("AWAITING_PAYMENT");
+    expect(defaultDispatcher.getEmailOutbox("karthik.iyer@example.com")).toHaveLength(0);
   });
 
   it("4. Automatically generates Abandoned Cart Recovery email when order is awaiting payment for > 1 hour", async () => {
@@ -363,6 +410,7 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
       }),
     });
 
+    await authenticateParent(req);
     const res = await createOrderHandler(req);
     expect(res.status).toBe(503);
 

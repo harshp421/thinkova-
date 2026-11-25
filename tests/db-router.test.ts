@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { DatabaseRouter } from "../backend/database/router/db-router";
 import { PreSchemaValidator, PreSchemaValidationError } from "../backend/database/schema/validator";
 import { UniversalSchemaMapper } from "../backend/database/schema/mapper";
@@ -128,18 +128,19 @@ describe("Pre-High Stable DB Routing & Pre-Schema Integration", () => {
   // 4. Protocol Auto-Detection & Custom Driver Registration
   describe("4. Router Driver Registry & Protocol Detection", () => {
     it("auto-detects database dialect from connection URIs", () => {
-      const pgDriver = router.createDriverFromUri("pg", "postgresql://user:pass@localhost:5432/mydb");
-      expect(pgDriver?.dialect).toBe("postgres");
-
       const mongoDriver = router.createDriverFromUri("mongo", "mongodb+srv://user:pass@cluster.mongodb.net/mydb");
       expect(mongoDriver?.dialect).toBe("mongodb");
-
-      const sqliteDriver = router.createDriverFromUri("sqlite", "file:./local.db");
-      expect(sqliteDriver?.dialect).toBe("sqlite");
 
       const memDriver = router.createDriverFromUri("mem", "memory://");
       expect(memDriver?.dialect).toBe("memory");
     });
+
+    it.each(["postgresql://localhost/mydb", "postgres://localhost/mydb", "sqlite://local.db", "file:./local.db", "./local.db"])(
+      "rejects unsupported storage URL %s",
+      uri => {
+        expect(() => router.createDriverFromUri("schools_db", uri)).toThrow("Unsupported database URL for 'schools_db'");
+      }
+    );
 
     it("allows registering and routing to custom DB drivers added later", async () => {
       // Mock custom driver (e.g. AWS DynamoDB, CouchDB, Redis)
@@ -176,6 +177,24 @@ describe("Pre-High Stable DB Routing & Pre-Schema Integration", () => {
 
   // 5. Circuit Breaker & Resilient Failover
   describe("5. Circuit Breaker & Failover", () => {
+    it("fails a production write when the configured driver is unavailable", async () => {
+      vi.stubEnv("NODE_ENV", "production");
+      try {
+        const productionRouter = new DatabaseRouter();
+        const unavailable = new MemoryDatabaseDriver();
+        const write = vi.spyOn(unavailable, "upsert").mockRejectedValue(new Error("Database unavailable"));
+        productionRouter.registerDriver("schools_test", unavailable);
+        productionRouter.setDomainRoute("schools", "schools_test");
+
+        await expect(productionRouter.upsert("schools", { id: "unavailable-school" }, "schools"))
+          .rejects.toThrow("Database unavailable");
+        expect(write).toHaveBeenCalledOnce();
+        expect(await productionRouter.getMemoryDriver().get("schools", "unavailable-school")).toBeNull();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it("trips circuit breaker on consecutive driver failures and fails over to Memory driver without crashing", async () => {
       const faultyDriver: IDatabaseDriver = {
         name: "faulty_pg",
@@ -207,8 +226,8 @@ describe("Pre-High Stable DB Routing & Pre-Schema Integration", () => {
         clear: async () => {},
       };
 
-      router.registerDriver("faulty_pg", faultyDriver);
-      router.setDomainRoute("schools", "faulty_pg");
+      router.registerDriver("schools_db", faultyDriver);
+      router.setDomainRoute("schools", "schools_db");
 
       // First call fails on faulty_pg but router catches and falls back to memory driver seamlessly
       await router.upsert("schools", { id: "sch_resilient_01", name: "Safe School" }, "schools");
@@ -219,7 +238,8 @@ describe("Pre-High Stable DB Routing & Pre-Schema Integration", () => {
 
       // Telemetry shows circuit breaker caught the errors
       const telemetry = router.getRouterTelemetry();
-      expect(telemetry.circuitBreakerStatus["faulty_pg"]).toBeDefined();
+      expect(telemetry.circuitBreakerStatus.schools_db).toBe(true);
+      expect(router.getDriverForDomain("schools")).toBe(router.getMemoryDriver());
     });
   });
 });

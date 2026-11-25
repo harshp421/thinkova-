@@ -1,5 +1,8 @@
 "use client";
 
+import { formatEnrollmentAmount } from "@/lib/enrollment-pricing";
+import { useEnrollmentPricing } from "@/lib/use-enrollment-pricing";
+import { useAuth } from "@/lib/auth-context";
 import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -186,7 +189,20 @@ export function MobileView() {
   const [enrolEmail, setEnrolEmail] = useState("");
   const [enrolConsent, setEnrolConsent] = useState(false);
   const [enrolSubmitting, setEnrolSubmitting] = useState(false);
-  const [enrolSubmitted, setEnrolSubmitted] = useState(false);
+  const { user, isLoading: authLoading } = useAuth();
+  const { pricing, unavailable, refresh } = useEnrollmentPricing("robotics-starter");
+  const [enrolError, setEnrolError] = useState("");
+  useEffect(() => {
+    const plan = new URLSearchParams(window.location.search).get("enrolPlan");
+    if (plan === "full" || plan === "parts") {
+      setSelectedPricingPlan(plan);
+      setIsEnrolFormOpen(true);
+    }
+  }, []);
+  const fullFee = pricing ? formatEnrollmentAmount(pricing.full) : "See checkout";
+  const firstFee = pricing ? formatEnrollmentAmount(pricing.first) : "See checkout";
+  const secondFee = pricing ? formatEnrollmentAmount(pricing.second) : "See checkout";
+  const totalFee = pricing ? formatEnrollmentAmount(pricing.total) : "See checkout";
 
   // Field validation checks for mobile form
   const isMobileSchoolCodeValid = enrolSchoolCode.trim().length === 5;
@@ -204,8 +220,15 @@ export function MobileView() {
     e.preventDefault();
     if (!isMobileFormValid || enrolSubmitting) return;
 
+    if (authLoading || !pricing) return;
+    if (!user) {
+      const destination = window.location.pathname + "?enrolPlan=" + selectedPricingPlan + "#mobile-enrol-title";
+      window.location.assign(`/signup?redirectTo=${encodeURIComponent(destination)}`);
+      return;
+    }
+    setEnrolError("");
     setEnrolSubmitting(true);
-    const amountInRupees = selectedPricingPlan === "full" ? 4499 : 2500;
+    const amountInRupees = selectedPricingPlan === "full" ? pricing.full : pricing.first;
 
     try {
       const res = await fetch("/api/cashfree/order", {
@@ -219,60 +242,62 @@ export function MobileView() {
           schoolUid: enrolSchoolCode.trim().toUpperCase(),
           grade: parseInt(enrolGrade.replace(/\D/g, "") || "6", 10),
           paymentPlan: selectedPricingPlan === "full" ? "FULL" : "INSTALLMENTS",
+          courseId: "robotics-starter",
           amountInRupees,
-
         }),
       });
 
-      if (res.ok) {
-        const result = await res.json();
-        if (result.paymentSessionId) {
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (result.code === "PRICE_TAMPERING_DETECTED") refresh();
+        throw new Error(result.message || result.error || "Unable to start checkout. Please try again.");
+      }
+      if (!result.paymentSessionId) {
+        throw new Error("Cashfree did not return a payment session. Please try again.");
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const loadSdk = (): Promise<any> => {
+        return new Promise((resolve, reject) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const loadSdk = (): Promise<any> => {
-            return new Promise((resolve, reject) => {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              if (typeof (window as any).Cashfree !== "undefined") {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                resolve((window as any).Cashfree({ mode: (result.environment || "PRODUCTION").toLowerCase() }));
-                return;
-              }
-              const script = document.createElement("script");
-              script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
-              script.async = true;
-              script.onload = () => {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                if (typeof (window as any).Cashfree !== "undefined") {
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  resolve((window as any).Cashfree({ mode: (result.environment || "PRODUCTION").toLowerCase() }));
-                } else {
-                  reject(new Error("Cashfree SDK failed to initialize"));
-                }
-              };
-              script.onerror = () => reject(new Error("Failed to load Cashfree checkout"));
-              document.body.appendChild(script);
-            });
-          };
-
-          try {
-            const cashfree = await loadSdk();
-            await cashfree.checkout({
-              paymentSessionId: result.paymentSessionId,
-              redirectTarget: "_self",
-            });
-          } catch (sdkErr) {
-            console.warn("[Cashfree SDK fallback to direct hosted payment gateway]", sdkErr);
-            if (result.checkoutUrl) {
-              window.location.href = result.checkoutUrl;
-              return;
-            }
-            throw sdkErr;
+          if (typeof (window as any).Cashfree !== "undefined") {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            resolve((window as any).Cashfree({ mode: (result.environment || "PRODUCTION").toLowerCase() }));
+            return;
           }
+          const script = document.createElement("script");
+          script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
+          script.async = true;
+          script.onload = () => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (typeof (window as any).Cashfree !== "undefined") {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              resolve((window as any).Cashfree({ mode: (result.environment || "PRODUCTION").toLowerCase() }));
+            } else {
+              reject(new Error("Cashfree SDK failed to initialize"));
+            }
+          };
+          script.onerror = () => reject(new Error("Failed to load Cashfree checkout"));
+          document.body.appendChild(script);
+        });
+      };
+
+      try {
+        const cashfree = await loadSdk();
+        await cashfree.checkout({
+          paymentSessionId: result.paymentSessionId,
+          redirectTarget: "_self",
+        });
+      } catch (sdkErr) {
+        console.warn("[Cashfree SDK fallback to direct hosted payment gateway]", sdkErr);
+        if (result.checkoutUrl) {
+          window.location.href = result.checkoutUrl;
           return;
         }
+        throw sdkErr;
       }
-    } catch (err) {
-      console.error(err);
-      setEnrolSubmitted(true);
+    } catch (error) {
+      setEnrolError(error instanceof Error ? error.message : "Unable to start checkout.");
+    } finally {
       setEnrolSubmitting(false);
     }
   }
@@ -1397,7 +1422,7 @@ className="font-medium underline underline-offset-2 hover:text-[#FF6B2C]"
               {[
                 { num: 1, title: "Get your school code", sub: "In your school’s circular or WhatsApp." },
                 { num: 2, title: "Enrol online", sub: "Two minutes, on your phone." },
-                { num: 3, title: "Pay in full or in two parts", sub: "₹4,499 in full, or ₹4,999 in two parts." },
+                { num: 3, title: "Pay in full or in two parts", sub: `${fullFee} in full, or ${totalFee} in two parts.` },
                 { num: 4, title: "Meet us online", sub: "A 30-minute parent session." },
                 { num: 5, title: "Level up each week", sub: "Updates after levels 2, 4 and 6." },
                 { num: 6, title: "Demo day", sub: "Your child presents at school.", isOrange: true },
@@ -1484,7 +1509,7 @@ className="font-medium underline underline-offset-2 hover:text-[#FF6B2C]"
                 </div>
               </div>
               <span className="font-display text-[26px] sm:text-[28px] font-normal text-white tracking-tight">
-                ₹4,499
+                {fullFee}
               </span>
             </div>
 
@@ -1512,12 +1537,12 @@ className="font-medium underline underline-offset-2 hover:text-[#FF6B2C]"
                 <div>
                   <span className="font-semibold text-[15px] text-white">Pay in two parts</span>
                   <p className="mt-0.5 text-[12px] text-[#8e9099]">
-                    ₹2,500 now, ₹2,499 by level 5
+                    {firstFee} now, {secondFee} by level 5
                   </p>
                 </div>
               </div>
               <span className="font-display text-[26px] sm:text-[28px] font-normal text-white tracking-tight">
-                ₹4,999
+                {totalFee}
               </span>
             </div>
 
@@ -1562,7 +1587,7 @@ className="font-medium underline underline-offset-2 hover:text-[#FF6B2C]"
               className="mt-6 flex h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff5520] to-[#ff6b2c] font-semibold text-[15px] text-black shadow-[0_4px_25px_rgba(255,85,32,0.4)] transition active:scale-[0.98]"
             >
               <span>
-                {selectedPricingPlan === "full" ? "Enrol and pay ₹4,499" : "Enrol and pay ₹2,500"}
+                {selectedPricingPlan === "full" ? `Enrol and pay ${fullFee}` : `Enrol and pay ${firstFee}`}
               </span>
               <ArrowRight className="size-4 stroke-[2.5]" />
             </button>
@@ -1628,7 +1653,7 @@ className="font-medium underline underline-offset-2 hover:text-[#FF6B2C]"
                   Choose how to pay
                 </h3>
                 <p className="mt-1 text-[13px] text-[#5f6068]">
-                  ₹4,499 in full or ₹4,999 in two parts
+                  {fullFee} in full or {totalFee} in two parts
                 </p>
               </div>
             </li>
@@ -1674,31 +1699,6 @@ className="underline underline-offset-2 hover:text-[#FF6B2C]">WhatsApp us</a>.
         {/* Expanded Student Details & Enrolment Form */}
         {isEnrolFormOpen && (
           <div className="mt-7 rounded-[26px] border border-black/[0.08] bg-white p-5 sm:p-6 shadow-xl animate-in fade-in slide-in-from-top-4 duration-300">
-            {enrolSubmitted ? (
-              <div className="py-4 text-center">
-                <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-[#109e58] text-white shadow-sm">
-                  <Check className="size-6 stroke-[3]" />
-                </div>
-                <h3 className="mt-4 font-display text-[22px] font-normal text-[#0e0f12]">
-                  Enrolment request received!
-                </h3>
-                <p className="mt-2 text-[14px] leading-relaxed text-[#5f6068]">
-                  Thank you! We’ve sent a confirmation to WhatsApp at <strong className="text-black font-semibold">{enrolMobile}</strong> and payment receipt to <strong className="text-black font-semibold">{enrolEmail}</strong> for {enrolChildName || "your child"}.
-                </p>
-                <div className="mt-5 rounded-2xl bg-[#f4f5f7] p-4 text-left text-[13px] text-[#5f6068] space-y-1.5">
-                  <p><strong className="text-[#0e0f12]">Child:</strong> {enrolChildName} ({enrolGrade}, Sec {enrolSection})</p>
-                  <p><strong className="text-[#0e0f12]">School Code:</strong> {enrolSchoolCode}</p>
-                  <p><strong className="text-[#0e0f12]">Plan:</strong> {selectedPricingPlan === "full" ? "₹4,499 in full" : "₹4,999 in two parts"}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setEnrolSubmitted(false)}
-                  className="mt-5 inline-block text-[13px] font-semibold text-[#ff5520] underline"
-                >
-                  Edit details or enrol another child
-                </button>
-              </div>
-            ) : (
               <form onSubmit={handleMobileEnrolSubmit} className="space-y-6">
                 <div className="flex items-center justify-between border-b border-black/5 pb-3">
                   <h3 className="font-display text-[18px] font-normal text-[#0e0f12]">
@@ -1915,7 +1915,7 @@ className="underline underline-offset-2 hover:text-[#FF6B2C]">WhatsApp us</a>.
                         <span className="text-[12px] font-semibold text-[#0e0f12]">Pay in full</span>
                         <span className="rounded bg-[#125835] px-1.5 py-0.5 text-[9px] font-bold text-white">Save ₹500</span>
                       </div>
-                      <p className="mt-1 text-[16px] font-normal font-display text-[#0e0f12]">₹4,499</p>
+                      <p className="mt-1 text-[16px] font-normal font-display text-[#0e0f12]">{fullFee}</p>
                     </button>
 
                     <button
@@ -1929,8 +1929,8 @@ className="underline underline-offset-2 hover:text-[#FF6B2C]">WhatsApp us</a>.
                       )}
                     >
                       <span className="text-[12px] font-semibold text-[#0e0f12]">Pay in two parts</span>
-                      <p className="mt-1 text-[16px] font-normal font-display text-[#0e0f12]">₹4,999</p>
-                      <p className="text-[10px] text-[#5f6068]">₹2,500 now</p>
+                      <p className="mt-1 text-[16px] font-normal font-display text-[#0e0f12]">{totalFee}</p>
+                      <p className="text-[10px] text-[#5f6068]">{firstFee} now</p>
                     </button>
                   </div>
                 </div>
@@ -1949,9 +1949,11 @@ className="underline underline-offset-2 hover:text-[#FF6B2C]">WhatsApp us</a>.
                   </label>
                 </div>
 
-                <button
+                {enrolError && <p role="alert" className="text-sm text-red-700">{enrolError}</p>}
+                  {unavailable && <button type="button" onClick={refresh}>Retry loading price</button>}
+                  <button
                   type="submit"
-                  disabled={!isMobileFormValid || enrolSubmitting}
+                  disabled={!isMobileFormValid || enrolSubmitting || authLoading || !pricing}
                   className={cn(
                     "flex h-[52px] w-full items-center justify-center gap-2 rounded-xl font-semibold text-[15px] transition shadow-md",
                     isMobileFormValid && !enrolSubmitting
@@ -1966,8 +1968,8 @@ className="underline underline-offset-2 hover:text-[#FF6B2C]">WhatsApp us</a>.
                       <span>
                         {isMobileFormValid
                           ? selectedPricingPlan === "full"
-                            ? "Proceed to pay ₹4,499"
-                            : "Proceed to pay ₹2,500"
+                            ? `Proceed to pay ${fullFee}`
+                            : `Proceed to pay ${firstFee}`
                           : "Fill required fields to enrol"}
                       </span>
                       <ArrowRight className="size-4 stroke-[2.5]" />
@@ -1975,7 +1977,6 @@ className="underline underline-offset-2 hover:text-[#FF6B2C]">WhatsApp us</a>.
                   )}
                 </button>
               </form>
-            )}
           </div>
         )}
         </div>
@@ -2340,8 +2341,8 @@ className="hover:text-[#ff5520] transition">
       >
         <div className="flex items-center gap-3">
           <div className="flex-1 min-w-0">
-            <p className="text-[17px] font-bold text-white leading-none">&#8377;4,999</p>
-            <p className="mt-0.5 text-[12px] text-white/45 leading-none">&#8377;2,500 to join</p>
+            <p className="text-[17px] font-bold text-white leading-none">{totalFee}</p>
+            <p className="mt-0.5 text-[12px] text-white/45 leading-none">{firstFee} to join</p>
           </div>
           <a
             href={siteConfig.whatsappUrl}

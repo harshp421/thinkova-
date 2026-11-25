@@ -1,4 +1,5 @@
-import { MongoClient, Db } from "mongodb";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { MongoClient, Db, type ClientSession } from "mongodb";
 import type {
   IDatabaseDriver,
   SupportedDialect,
@@ -15,6 +16,18 @@ import type {
 export class MongoDatabaseDriver implements IDatabaseDriver {
   public readonly name: string = "mongodb";
   public readonly dialect: SupportedDialect = "mongodb";
+
+  private transactionSession = new AsyncLocalStorage<ClientSession>();
+
+  public async transaction<T>(operation: () => Promise<T>): Promise<T> {
+    await this.getDb();
+    const session = this.client!.startSession();
+    try {
+      return await session.withTransaction(() => this.transactionSession.run(session, operation));
+    } finally {
+      await session.endSession();
+    }
+  }
 
   private connectionUri: string;
   private client: MongoClient | null = null;
@@ -106,7 +119,7 @@ export class MongoDatabaseDriver implements IDatabaseDriver {
   public async get<T>(collection: string, id: string): Promise<T | null> {
     const db = await this.getDb();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const doc = await db.collection(collection).findOne({ $or: [{ id }, { _id: id as any }] } as any);
+    const doc = await db.collection(collection).findOne({ $or: [{ id }, { _id: id as any }] } as any, { session: this.transactionSession.getStore() });
     if (!doc) return null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { _id, ...rest } = doc as any;
@@ -125,7 +138,7 @@ export class MongoDatabaseDriver implements IDatabaseDriver {
       }
     }
 
-    let cursor = db.collection(collection).find(query);
+    let cursor = db.collection(collection).find(query, { session: this.transactionSession.getStore() });
 
     if (options?.sort) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -174,7 +187,7 @@ export class MongoDatabaseDriver implements IDatabaseDriver {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { id: docId } as any,
       { $set: setFields },
-      { upsert: true }
+      { upsert: true, session: this.transactionSession.getStore() }
     );
   }
 
@@ -193,7 +206,8 @@ export class MongoDatabaseDriver implements IDatabaseDriver {
     await db.collection(collection).updateOne(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { $or: [{ id }, { _id: id as any }] } as any,
-      { $set: setFields }
+      { $set: setFields },
+      { session: this.transactionSession.getStore() }
     );
   }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 export interface StudentProfile {
@@ -16,6 +16,7 @@ export interface StudentProfile {
   isEnrolled?: boolean;
   activeEnrollment?: {
     id: string;
+    courseId?: string;
     status: string;
     currentLevel?: number;
     paymentPlan?: string;
@@ -38,7 +39,6 @@ interface AuthContextType {
   isLoading: boolean;
   login: (identifier: string, password?: string) => Promise<{ success: boolean; redirectTo: string; error?: string }>;
   signup: (payload: { fullName: string; email: string; phone: string; password?: string; whatsappUpdates?: boolean }) => Promise<{ success: boolean; redirectTo: string; error?: string }>;
-  loginWithGoogle: (payload?: { email?: string; name?: string }) => Promise<{ success: boolean; redirectTo: string; error?: string }>;
   logout: () => Promise<void>;
   addStudent: (studentData: { fullName: string; currentGrade: number; schoolName: string; preferredTrack?: string; priorExperience?: string }) => Promise<{ success: boolean; student?: StudentProfile; recommendedEnrollUrl?: string; error?: string }>;
   setActiveStudent: (student: StudentProfile | null) => void;
@@ -53,151 +53,45 @@ const LOCAL_STORAGE_ACTIVE_STUDENT_KEY = "thinkova_active_student_profile";
 const LOCAL_STORAGE_STUDENTS_KEY = "thinkova_students_list";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<ParentUser | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cached = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
-        if (cached) return JSON.parse(cached);
-      } catch {}
-    }
-    return null;
-  });
-
-  const [students, setStudents] = useState<StudentProfile[]>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cached = localStorage.getItem(LOCAL_STORAGE_STUDENTS_KEY);
-        if (cached) return JSON.parse(cached);
-      } catch {}
-    }
-    return [];
-  });
-
-  const [activeStudent, setActiveStudentState] = useState<StudentProfile | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cached = localStorage.getItem(LOCAL_STORAGE_ACTIVE_STUDENT_KEY);
-        if (cached) return JSON.parse(cached);
-      } catch {}
-    }
-    return null;
-  });
-
-  const [isLoading, setIsLoading] = useState<boolean>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cached = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
-        if (cached) return false;
-      } catch {}
-    }
-    return true;
-  });
+  const [user, setUser] = useState<ParentUser | null>(null);
+  const [students, setStudents] = useState<StudentProfile[]>([]);
+  const [activeStudent, setActiveStudentState] = useState<StudentProfile | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
-
-  // Load active session from server and synchronize device localStorage
-  const initSession = useCallback(async () => {
-    // 1. Initial immediate restore from local storage to prevent UI flash
-    if (typeof window !== "undefined") {
-      try {
-        const cachedUser = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
-        if (cachedUser) {
-          setUser(JSON.parse(cachedUser));
-          setIsLoading(false);
-        }
-        const cachedStudents = localStorage.getItem(LOCAL_STORAGE_STUDENTS_KEY);
-        let parsedStudents: StudentProfile[] = [];
-        if (cachedStudents) {
-          try {
-            parsedStudents = JSON.parse(cachedStudents);
-            setStudents(parsedStudents);
-          } catch {
-            // ignore
-          }
-        }
-        const cachedActiveStudent = localStorage.getItem(LOCAL_STORAGE_ACTIVE_STUDENT_KEY);
-        if (cachedActiveStudent) {
-          try {
-            const parsedActive = JSON.parse(cachedActiveStudent);
-            setActiveStudentState(parsedActive);
-            if (parsedStudents.length === 0 && parsedActive) {
-              setStudents([parsedActive]);
-              localStorage.setItem(LOCAL_STORAGE_STUDENTS_KEY, JSON.stringify([parsedActive]));
-            }
-          } catch {
-            // ignore
-          }
-        }
-      } catch {
-        // Safe fallback
-      }
-    }
-
-    try {
-      const res = await fetch("/api/auth/me", { cache: "no-store" });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.authenticated && data.user) {
-          setUser(data.user);
-
-          let resolvedStudents: StudentProfile[] = data.students || [];
-
-          // Preserve cached students if server in-memory store returned empty (e.g. server hot-reload)
-          if (resolvedStudents.length === 0 && typeof window !== "undefined") {
-            const cachedStudentsStr = localStorage.getItem(LOCAL_STORAGE_STUDENTS_KEY);
-            if (cachedStudentsStr) {
-              try {
-                const parsedCached = JSON.parse(cachedStudentsStr);
-                if (Array.isArray(parsedCached) && parsedCached.length > 0) {
-                  resolvedStudents = parsedCached;
-                }
-              } catch {
-                // ignore
-              }
-            }
-          }
-
-          // Restore active student from localStorage if available
-          let resolvedActiveStudent: StudentProfile | null = null;
-          const savedActiveStudent = typeof window !== "undefined" ? localStorage.getItem(LOCAL_STORAGE_ACTIVE_STUDENT_KEY) : null;
-          if (savedActiveStudent) {
-            try {
-              const parsed = JSON.parse(savedActiveStudent);
-              const matched = resolvedStudents.find((s: StudentProfile) => s.id === parsed.id);
-              resolvedActiveStudent = matched || parsed;
-            } catch {
-              // ignore
-            }
-          }
-
-          if (!resolvedActiveStudent && resolvedStudents.length > 0) {
-            resolvedActiveStudent = resolvedStudents[0] || null;
-          }
-
-          if (resolvedActiveStudent && !resolvedStudents.some((s: StudentProfile) => s.id === resolvedActiveStudent?.id)) {
-            resolvedStudents = [...resolvedStudents, resolvedActiveStudent];
-          }
-
-          setStudents(resolvedStudents);
-          setActiveStudentState(resolvedActiveStudent);
-
-          if (typeof window !== "undefined") {
-            localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(data.user));
-            localStorage.setItem(LOCAL_STORAGE_STUDENTS_KEY, JSON.stringify(resolvedStudents));
-            if (resolvedActiveStudent) {
-              localStorage.setItem(LOCAL_STORAGE_ACTIVE_STUDENT_KEY, JSON.stringify(resolvedActiveStudent));
-            }
-          }
-          return;
-        }
-      }
-    } catch (e) {
-      console.warn("[Auth Context] Failed to fetch /api/auth/me:", e);
-    }
-  }, []);
+  const initialRequest = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    initSession().finally(() => setIsLoading(false));
-  }, [initSession]);
+    for (const key of Object.keys(localStorage)) {
+      if ([LOCAL_STORAGE_USER_KEY, LOCAL_STORAGE_STUDENTS_KEY, LOCAL_STORAGE_ACTIVE_STUDENT_KEY, "thinkova_enrolled_courses"].includes(key) || key.startsWith("thinkova_sub_")) localStorage.removeItem(key);
+    }
+    const controller = new AbortController();
+    initialRequest.current = controller;
+    async function load() {
+      try {
+        const res = await fetch("/api/auth/me", { cache: "no-store", signal: controller.signal });
+        const data = res.ok ? await res.json() : null;
+        if (controller.signal.aborted) return;
+        const roster: StudentProfile[] = data?.students || [];
+        setUser(data?.user || null);
+        setStudents(roster);
+        setActiveStudentState(roster[0] || null);
+      } finally {
+        if (!controller.signal.aborted) setIsLoading(false);
+      }
+    }
+    const reloadSession = (event: StorageEvent) => {
+      if (event.key === "thinkova_session_change") window.location.reload();
+    };
+    const restorePage = (event: PageTransitionEvent) => { if (event.persisted) window.location.reload(); };
+    window.addEventListener("pageshow", restorePage);
+    window.addEventListener("storage", reloadSession);
+    void load().catch(() => {});
+    return () => {
+      controller.abort();
+      window.removeEventListener("storage", reloadSession);
+      window.removeEventListener("pageshow", restorePage);
+    };
+  }, []);
 
   const setActiveStudent = (student: StudentProfile | null) => {
     setActiveStudentState(student);
@@ -205,30 +99,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setStudents((prev) => {
         if (!prev.some((s) => s.id === student.id)) {
           const updated = [...prev, student];
-          if (typeof window !== "undefined") {
-            localStorage.setItem(LOCAL_STORAGE_STUDENTS_KEY, JSON.stringify(updated));
-          }
           return updated;
         }
         return prev;
       });
     }
-    if (typeof window !== "undefined") {
-      if (student) {
-        localStorage.setItem(LOCAL_STORAGE_ACTIVE_STUDENT_KEY, JSON.stringify(student));
-      } else {
-        localStorage.removeItem(LOCAL_STORAGE_ACTIVE_STUDENT_KEY);
-      }
-    }
+
   };
 
   const updateUserProfile = (updated: { fullName?: string; phone?: string }) => {
     setUser((prev) => {
       if (!prev) return null;
       const next = { ...prev, ...updated };
-      if (typeof window !== "undefined") {
-        localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(next));
-      }
       return next;
     });
   };
@@ -240,9 +122,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const data = await res.json();
         if (data.students) {
           setStudents(data.students);
-          if (typeof window !== "undefined") {
-            localStorage.setItem(LOCAL_STORAGE_STUDENTS_KEY, JSON.stringify(data.students));
-          }
         }
       }
     } catch (e) {
@@ -251,6 +130,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const login = async (identifier: string, password?: string) => {
+    initialRequest.current?.abort();
     setIsLoading(true);
     try {
       const res = await fetch("/api/auth/login", {
@@ -262,15 +142,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!res.ok) {
         return { success: false, redirectTo: "", error: data.error || "Login failed" };
       }
+      localStorage.setItem("thinkova_session_change", crypto.randomUUID());
       setUser(data.user);
       setStudents(data.students || []);
-      if (data.students?.length > 0) {
-        setActiveStudent(data.students[0]);
-      }
-      if (typeof window !== "undefined") {
-        localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(data.user));
-        localStorage.setItem(LOCAL_STORAGE_STUDENTS_KEY, JSON.stringify(data.students || []));
-      }
+      setActiveStudentState(data.students?.[0] || null);
       return { success: true, redirectTo: data.redirectTo || "/who-is-learning" };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Network error";
@@ -281,6 +156,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signup = async (payload: { fullName: string; email: string; phone: string; password?: string; whatsappUpdates?: boolean }) => {
+    initialRequest.current?.abort();
     setIsLoading(true);
     try {
       const res = await fetch("/api/auth/signup", {
@@ -292,11 +168,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!res.ok) {
         return { success: false, redirectTo: "", error: data.error || "Signup failed" };
       }
+      localStorage.setItem("thinkova_session_change", crypto.randomUUID());
       setUser(data.user);
       setStudents([]);
-      if (typeof window !== "undefined") {
-        localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(data.user));
-      }
+      setActiveStudentState(null);
       return { success: true, redirectTo: data.redirectTo || "/tell-us-child" };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Network error";
@@ -306,41 +181,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const loginWithGoogle = async (payload?: { email?: string; name?: string }) => {
-    setIsLoading(true);
-    try {
-      const res = await fetch("/api/auth/google", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload || {}),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        return { success: false, redirectTo: "", error: data.error || "Google sign-in failed" };
-      }
-      setUser(data.user);
-      setStudents(data.students || []);
-      if (data.students?.length > 0) {
-        setActiveStudent(data.students[0]);
-      }
-      if (typeof window !== "undefined") {
-        localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(data.user));
-      }
-      return { success: true, redirectTo: data.redirectTo || "/who-is-learning" };
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Network error";
-      return { success: false, redirectTo: "", error: msg };
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const logout = async () => {
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } catch {
-      // Ignore
-    }
+    initialRequest.current?.abort();
+    const result = await fetch("/api/auth/logout", { method: "POST" });
+    if (!result.ok) throw new Error("Sign-out failed. Please try again.");
     setUser(null);
     setStudents([]);
     setActiveStudent(null);
@@ -349,6 +193,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem(LOCAL_STORAGE_ACTIVE_STUDENT_KEY);
       localStorage.removeItem(LOCAL_STORAGE_STUDENTS_KEY);
     }
+    localStorage.setItem("thinkova_session_change", crypto.randomUUID());
     router.push("/login");
   };
 
@@ -378,9 +223,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setStudents((prev) => {
         const next = [...prev, newStudent];
-        if (typeof window !== "undefined") {
-          localStorage.setItem(LOCAL_STORAGE_STUDENTS_KEY, JSON.stringify(next));
-        }
         return next;
       });
       setActiveStudent(newStudent);
@@ -405,7 +247,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         login,
         signup,
-        loginWithGoogle,
         logout,
         updateUserProfile,
         addStudent,

@@ -18,7 +18,6 @@ import type {
 } from "../types";
 import { PreSchemaValidator } from "../schema/validator";
 import { dbRouter, type DatabaseRouter } from "../router/db-router";
-import { notificationDispatcher } from "../../notifications/dispatcher";
 
 export interface OrderWithRelations {
   order: OrderEntity;
@@ -62,6 +61,14 @@ export interface ICommerceRepository {
   upsertEnrollment(enrollment: EnrollmentEntity): Promise<void>;
   upsertOrder(order: OrderEntity): Promise<void>;
   upsertRefund(refund: RefundEntity): Promise<void>;
+  getRefundById(refundId: string): Promise<RefundEntity | null>;
+  getRefundsByEnrollmentId(enrollmentId: string): Promise<RefundEntity[]>;
+  getRefundByGatewayId(gatewayRefundId: string): Promise<RefundEntity | null>;
+  applyRefundLifecycleStatus(params: {
+    refundId: string;
+    status: RefundEntity["status"];
+    gatewayRefundId?: string;
+  }): Promise<RefundEntity | null>;
   upsertAssessment(assessment: AssessmentEntity): Promise<void>;
   getOrderById(orderId: string): Promise<OrderEntity | null>;
   getEnrollmentById(enrollmentId: string): Promise<EnrollmentEntity | null>;
@@ -90,20 +97,6 @@ export interface ICommerceRepository {
   upsertCourseProgress(progress: Partial<CourseProgressEntity>): Promise<CourseProgressEntity>;
   getLearningAnalysis(studentId: string): Promise<LearningStateAnalysisEntity | null>;
   saveLearningAnalysis(analysis: Partial<LearningStateAnalysisEntity>): Promise<LearningStateAnalysisEntity>;
-  enrollAndInitializeLearning(payload: {
-    studentId: string;
-    courseId: string;
-    courseTitle: string;
-    trackId: string;
-    parentUserId: string;
-    paymentPlan: "FULL" | "INSTALLMENTS";
-    amountInRupees: number;
-  }): Promise<{
-    enrollment: EnrollmentEntity;
-    progress: CourseProgressEntity;
-    analysis: LearningStateAnalysisEntity;
-    learningPortalUrl: string;
-  }>;
   getPaymentByOrderId(orderId: string): Promise<PaymentEntity | null>;
   getOrderWithJoinedDetails(orderId: string): Promise<OrderWithFullDetails | null>;
   confirmOrderAndEnrollment(params: {
@@ -228,17 +221,38 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
 
   async getPendingRefunds(): Promise<RefundWithRelations[]> {
     const refunds = await this.router.find<RefundEntity>("refunds", { status: "INITIATED" }, undefined, "commerce");
+    const unsent = refunds.filter((refund) => !refund.refundAlertSentAt);
+    if (unsent.length === 0) return [];
+
+    // Batched $in resolution eliminates N+1 sequential DB round-trips (constant 4 queries instead of 1 + 3N)
+    const enrollmentIds = Array.from(new Set(unsent.map((r) => r.enrollmentId).filter(Boolean)));
+    const enrollments =
+      enrollmentIds.length > 0
+        ? await this.router.find<EnrollmentEntity>("enrollments", { id: { $in: enrollmentIds } }, undefined, "commerce")
+        : [];
+    const enrollmentMap = new Map(enrollments.map((e) => [e.id, e]));
+
+    const studentIds = Array.from(new Set(enrollments.map((e) => e.studentId).filter(Boolean)));
+    const students =
+      studentIds.length > 0
+        ? await this.router.find<StudentEntity>("students", { id: { $in: studentIds } }, undefined, "commerce")
+        : [];
+    const studentMap = new Map(students.map((s) => [s.id, s]));
+
+    const userIds = Array.from(new Set(students.map((s) => s.parentUserId).filter(Boolean)));
+    const users =
+      userIds.length > 0
+        ? await this.router.find<UserEntity>("users", { id: { $in: userIds } }, undefined, "commerce")
+        : [];
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
     const results: RefundWithRelations[] = [];
-
-    for (const refund of refunds) {
-      if (!refund.refundAlertSentAt) {
-        const enrollment = await this.router.get<EnrollmentEntity>("enrollments", refund.enrollmentId, "commerce");
-        const student = enrollment ? await this.router.get<StudentEntity>("students", enrollment.studentId, "commerce") : null;
-        const user = student ? await this.router.get<UserEntity>("users", student.parentUserId, "commerce") : null;
-
-        if (student && user) {
-          results.push({ refund, user, student });
-        }
+    for (const refund of unsent) {
+      const enrollment = enrollmentMap.get(refund.enrollmentId);
+      const student = enrollment ? studentMap.get(enrollment.studentId) : undefined;
+      const user = student ? userMap.get(student.parentUserId) : undefined;
+      if (student && user) {
+        results.push({ refund, user, student });
       }
     }
 
@@ -323,6 +337,45 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
   async upsertRefund(refund: RefundEntity): Promise<void> {
     const valid = PreSchemaValidator.normalizeRefund(refund);
     await this.router.upsert("refunds", valid, "commerce");
+  }
+
+  async getRefundById(refundId: string): Promise<RefundEntity | null> {
+    return await this.router.get<RefundEntity>("refunds", refundId, "commerce");
+  }
+
+  async getRefundsByEnrollmentId(enrollmentId: string): Promise<RefundEntity[]> {
+    return await this.router.find<RefundEntity>("refunds", { enrollmentId }, undefined, "commerce");
+  }
+
+  async getRefundByGatewayId(gatewayRefundId: string): Promise<RefundEntity | null> {
+    if (!gatewayRefundId) return null;
+    const list = await this.router.find<RefundEntity>("refunds", { gatewayRefundId }, { limit: 1 }, "commerce");
+    return list[0] || null;
+  }
+
+  async applyRefundLifecycleStatus(params: {
+    refundId: string;
+    status: RefundEntity["status"];
+    gatewayRefundId?: string;
+  }): Promise<RefundEntity | null> {
+    const existing = await this.getRefundById(params.refundId);
+    if (!existing) return null;
+
+    const patch: Partial<RefundEntity> = {
+      status: params.status,
+      ...(params.gatewayRefundId ? { gatewayRefundId: params.gatewayRefundId } : {}),
+      ...(params.status === "COMPLETED" ? { completedAt: existing.completedAt || new Date() } : {}),
+    };
+    await this.router.update<RefundEntity>("refunds", existing.id, patch, "commerce");
+
+    if (params.status === "COMPLETED") {
+      await this.updateEnrollmentStatus(existing.enrollmentId, "REFUNDED");
+      if (existing.paymentId) {
+        await this.router.update<PaymentEntity>("payments", existing.paymentId, { status: "REFUNDED" }, "commerce");
+      }
+    }
+
+    return await this.getRefundById(existing.id);
   }
 
   async upsertAssessment(assessment: AssessmentEntity): Promise<void> {
@@ -469,145 +522,6 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
     return valid;
   }
 
-  async enrollAndInitializeLearning(payload: {
-    studentId: string;
-    courseId: string;
-    courseTitle: string;
-    trackId: string;
-    parentUserId: string;
-    paymentPlan: "FULL" | "INSTALLMENTS";
-    amountInRupees: number;
-  }): Promise<{
-    enrollment: EnrollmentEntity;
-    progress: CourseProgressEntity;
-    analysis: LearningStateAnalysisEntity;
-    learningPortalUrl: string;
-  }> {
-    const student = await this.getStudentById(payload.studentId);
-    const parent = await this.getUserById(payload.parentUserId);
-
-    const enrollmentId = `enr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const enrollment = PreSchemaValidator.normalizeEnrollment({
-      id: enrollmentId,
-      studentId: payload.studentId,
-      cohortBatchId: `batch_${payload.trackId}_pune`,
-      schoolUid: student?.schoolUid || "PUNE_CAMPUS",
-      paymentPlan: payload.paymentPlan,
-      status: "ENROLLED",
-      currentLevel: 1,
-      enrolledAt: new Date(),
-    });
-    await this.upsertEnrollment(enrollment);
-
-    // Fetch real course curriculum from thinkova_schools.courses
-    const course = await this.router.get<CourseEntity>("courses", payload.courseId, "schools");
-    const milestones: CourseMilestone[] = (course?.weeklyPlan && course.weeklyPlan.length > 0)
-      ? course.weeklyPlan.map((wp) => ({
-          id: `m_${wp.week}`,
-          weekNumber: wp.week,
-          title: wp.title,
-          summary: wp.subtitle,
-          completed: false,
-          videoUrl: wp.videoUrl || undefined,
-        }))
-      : [];
-
-    const totalWeeks = milestones.length > 0 ? milestones.length : (course?.weeklyPlan?.length || 6);
-    const progressId = `prog_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const progress = await this.upsertCourseProgress({
-      id: progressId,
-      studentId: payload.studentId,
-      courseId: payload.courseId,
-      courseTitle: course?.title || payload.courseTitle,
-      trackId: course?.trackId || payload.trackId,
-      enrollmentId: enrollment.id,
-      parentUserId: payload.parentUserId,
-      status: "ACTIVE",
-      currentWeek: 1,
-      totalWeeks,
-      frequencyPerWeek: 1,
-      frequencyLabel: "1 live in-school lab/week + 90 min guided sandbox",
-      completedMinutes: 0,
-      totalEstimatedMinutes: totalWeeks * 90,
-      lengthLeftMinutes: totalWeeks * 90,
-      completionPercentage: 0,
-      persona: (course?.trackId || payload.trackId) === "robotics" ? "BUILDER" : (course?.trackId || payload.trackId) === "ai" ? "LOGICIAN" : "CREATOR",
-      milestones,
-      streakDays: 0,
-      lastActiveAt: new Date(),
-      nextSessionAt: new Date(Date.now() + 7 * 86400000),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    const analysis = await this.saveLearningAnalysis({
-      id: `an_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      studentId: payload.studentId,
-      courseId: payload.courseId,
-      persona: progress.persona,
-      frequencyScore: 95,
-      completionVelocity: 1.15,
-      lengthLeftWeeks: 5,
-      projectedDemoDay: new Date(Date.now() + 35 * 86400000),
-      followRoute: "STANDARD",
-      strengths: ["Interactive testing", "Consistent attendance"],
-      areasOfGrowth: ["Multi-turn memory retention"],
-      recommendedNextTrack: payload.trackId === "ai" ? "robotics" : "ai",
-      parentReportPill: "Enrolment confirmed · Lab access active",
-      analyzedAt: new Date(),
-    });
-
-    const studentName = student?.fullName || "Student";
-    const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.thinkova.ai").replace(/\/$/, "");
-    const learningPortalUrl = `${baseUrl}/learning/${payload.studentId}?course=${encodeURIComponent(payload.courseId)}`;
-
-    // Dispatch Automations (OpenWA & Microsoft Graph)
-    if (parent?.phone) {
-      const cleanPhone = parent.phone.replace(/\D/g, "");
-      await notificationDispatcher.sendWhatsApp({
-        to: cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone,
-        templateName: "enrolment_confirmed_and_lab_opened",
-        fallbackText: `🎉 ThinkOva Enrolment Confirmed! ${studentName} is officially enrolled in ${payload.courseTitle}. Weekly school lab starts next batch. Student learning portal is now open: ${learningPortalUrl}`,
-        metadata: { studentId: payload.studentId, courseId: payload.courseId, enrollmentId: enrollment.id },
-      });
-    }
-
-    if (parent?.email) {
-      await notificationDispatcher.sendEmail({
-        to: parent.email,
-        subject: `🎉 Enrolment Confirmed: ${studentName} in ThinkOva ${payload.courseTitle}`,
-        text: `Hello ${parent.fullName || "Parent"},\n\nWe are thrilled to confirm ${studentName}'s enrolment in ${payload.courseTitle}.\n\nSchool Lab: In-school weekly sessions\nKits: All equipment provided at school\nStudent Learning Portal: ${learningPortalUrl}\n\nWarm regards,\nThinkOva Academic Team`,
-        html: `
-          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #0B0C0F;">
-            <h2 style="color: #FF6026;">🎉 Enrolment Confirmed!</h2>
-            <p>Dear <strong>${parent.fullName || "Parent"}</strong>,</p>
-            <p>We are thrilled to confirm that <strong>${studentName}</strong> is enrolled in <strong>${payload.courseTitle}</strong>.</p>
-            <div style="background: #F8F7F4; border-radius: 12px; padding: 18px; margin: 20px 0;">
-              <p style="margin: 4px 0;"><strong>Track:</strong> ${payload.courseTitle}</p>
-              <p style="margin: 4px 0;"><strong>Weekly Lab:</strong> 90 mins/week with certified tutor</p>
-              <p style="margin: 4px 0;"><strong>Kits & Materials:</strong> Included and provided at school</p>
-              <p style="margin: 4px 0;"><strong>Tuition Plan:</strong> ${payload.paymentPlan === "FULL" ? "Paid in Full" : "Part 1 Confirmed"}</p>
-            </div>
-            <p>
-              <a href="${learningPortalUrl}" style="background: #FF6026; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
-                Launch Learning Portal & Lab &rarr;
-              </a>
-            </p>
-            <p style="font-size: 12px; color: #667085; margin-top: 24px;">ThinkOva STEM & AI Labs · Partner Schools</p>
-          </div>
-        `,
-        metadata: { studentId: payload.studentId, courseId: payload.courseId },
-      });
-    }
-
-    return {
-      enrollment,
-      progress,
-      analysis,
-      learningPortalUrl,
-    };
-  }
-
   async getPaymentByOrderId(orderId: string): Promise<PaymentEntity | null> {
     const list = await this.router.find<PaymentEntity>(
       "payments",
@@ -622,11 +536,9 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
     const order = await this.getOrderById(orderId);
     if (!order) return null;
 
-    const [payment, enrollment, user] = await Promise.all([
-      this.getPaymentByOrderId(orderId),
-      this.getEnrollmentById(order.enrollmentId),
-      this.getUserById(order.userId),
-    ]);
+    const payment = await this.getPaymentByOrderId(orderId);
+    const enrollment = await this.getEnrollmentById(order.enrollmentId);
+    const user = await this.getUserById(order.userId);
 
     if (!enrollment || !user) return null;
 
@@ -666,14 +578,11 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
       throw new Error(`Order ${params.orderId} not found in database.`);
     }
 
-    // 1. Mark Order as PAID
-    await this.updateOrderStatus(params.orderId, "PAID");
-
     // 2. Persist Payment Transaction in thinkova_commerce.payments
     const existingPayment = await this.getPaymentByOrderId(params.orderId);
     if (!existingPayment) {
       const paymentDoc: PaymentEntity = {
-        id: `pay_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: `pay_${params.orderId}`,
         orderId: params.orderId,
         gateway: "CASHFREE",
         gatewayOrderId: params.gatewayOrderId || params.orderId,
@@ -716,7 +625,7 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
       }));
 
       const totalWeeks = milestones.length > 0 ? milestones.length : (course?.weeklyPlan?.length || 6);
-      const progressId = `prog_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const progressId = `prog_${enrollment.id}`;
       await this.upsertCourseProgress({
         id: progressId,
         studentId: enrollment.studentId,
@@ -745,7 +654,7 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
 
       // Initialize learning analysis
       await this.saveLearningAnalysis({
-        id: `ana_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: `ana_${enrollment.id}`,
         studentId: enrollment.studentId,
         courseId: resolvedCourseId,
         persona: (course?.trackId || student?.preferredTrack) === "robotics" ? "BUILDER" : (course?.trackId || student?.preferredTrack) === "ai" ? "LOGICIAN" : "CREATOR",
@@ -762,6 +671,7 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
       });
     }
 
+    await this.updateOrderStatus(params.orderId, "PAID");
     const fullDetails = await this.getOrderWithJoinedDetails(params.orderId);
     if (!fullDetails) {
       throw new Error(`Failed to retrieve joined details for order ${params.orderId}.`);

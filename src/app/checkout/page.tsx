@@ -1,5 +1,7 @@
 "use client";
 
+import { formatEnrollmentAmount } from "@/lib/enrollment-pricing";
+import { useEnrollmentPricing } from "@/lib/use-enrollment-pricing";
 import React, { useState, useEffect, useMemo } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -29,17 +31,19 @@ export default function CheckoutPage() {
   // Selected course from URL or default to game design matching Image 3
   const courseId = searchParams.get("courseId") || "game-design-starter";
   const course = getCourseById(courseId);
+  const { pricing, unavailable, refresh } = useEnrollmentPricing(course.id);
 
   const studentIdParam = searchParams.get("studentId");
+  const checkoutPath = `/checkout?${searchParams.toString()}`;
 
   // Task 6: Mandatory signup/login check before checkout / enrolment
   useEffect(() => {
     if (!authLoading) {
       if (!user) {
-        router.replace(`/signup?redirectTo=${encodeURIComponent(`/checkout?courseId=${courseId}`)}`);
+        router.replace(`/signup?redirectTo=${encodeURIComponent(checkoutPath)}`);
       }
     }
-  }, [authLoading, user, courseId, router]);
+  }, [authLoading, user, checkoutPath, router]);
 
   const targetStudent = useMemo(() => {
     if (studentIdParam) {
@@ -48,17 +52,6 @@ export default function CheckoutPage() {
     }
     if (activeStudent) return activeStudent;
     if (students.length > 0 && students[0]) return students[0];
-    if (user) {
-      return {
-        id: `std_${user.id}`,
-        fullName: user.fullName || "Learner",
-        currentGrade: 6,
-        schoolName: "ThinkOva Partner School",
-        schoolUid: "SCH_GENERAL",
-        isEnrolled: false,
-        activeEnrollment: null,
-      };
-    }
     return null;
   }, [studentIdParam, activeStudent, students, user]);
 
@@ -67,7 +60,7 @@ export default function CheckoutPage() {
   const studentGrade = targetStudent?.currentGrade || 6;
 
   // Plan state
-  const [paymentPlan, setPaymentPlan] = useState<"full" | "installments">("full");
+  const [paymentPlan, setPaymentPlan] = useState<"full" | "installments">(searchParams.get("plan") === "installments" ? "installments" : "full");
 
   // Parent form state (pre-filled with real authenticated parent details)
   const [parentName, setParentName] = useState(user?.fullName || "");
@@ -101,16 +94,22 @@ export default function CheckoutPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  const fullPrice = course.price || 3999;
-  const payTodayAmount = paymentPlan === "full" ? fullPrice : 3000;
-  const secondPartAmount = fullPrice - 3000 + 500; // ₹500 more in total
+  const fullPrice = pricing?.full;
+  const payTodayAmount = pricing && (paymentPlan === "full" ? pricing.full : pricing.first);
+  const secondPartAmount = pricing?.second;
 
   const handlePayAndEnrol = async () => {
     if (!user) {
-      router.push(`/signup?redirectTo=${encodeURIComponent(`/checkout?courseId=${course.id}`)}`);
+      router.push(`/signup?redirectTo=${encodeURIComponent(checkoutPath)}`);
       return;
     }
 
+    if (!targetStudent) {
+      const selection = new URLSearchParams({ courseId: course.id, plan: paymentPlan });
+      router.push(`/tell-us-child?${selection}`);
+      return;
+    }
+    if (!payTodayAmount) return;
     setIsProcessing(true);
     setErrorMessage("");
 
@@ -129,7 +128,7 @@ export default function CheckoutPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          studentId: effectiveStudentId,
+          studentId: targetStudent?.id,
           studentName,
           parentName: parentName || user.fullName,
           parentEmail: parentEmail || user.email,
@@ -147,6 +146,7 @@ export default function CheckoutPage() {
       const cfData = await cashfreeRes.json().catch(() => ({}));
 
       if (!cashfreeRes.ok || cfData.status !== "success" || !cfData.paymentSessionId) {
+        if (cfData.code === "PRICE_TAMPERING_DETECTED") refresh();
         throw new Error(
           cfData.message || cfData.error || "Failed to initialize Cashfree payment order. Please try again."
         );
@@ -197,6 +197,7 @@ export default function CheckoutPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Payment processing error";
       setErrorMessage(msg);
+    } finally {
       setIsProcessing(false);
     }
   };
@@ -317,7 +318,7 @@ export default function CheckoutPage() {
                       </div>
                     </div>
                     <div className="mt-3 text-2xl font-bold tracking-tight text-[#0B0C0F]">
-                      ₹{fullPrice.toLocaleString("en-IN")}
+                      {fullPrice ? formatEnrollmentAmount(fullPrice) : "—"}
                     </div>
                     <p className="mt-1 text-xs text-[#5A5F6B]">
                       One payment · kit included
@@ -352,10 +353,10 @@ export default function CheckoutPage() {
                       </div>
                     </div>
                     <div className="mt-3 text-2xl font-bold tracking-tight text-[#0B0C0F]">
-                      ₹3,000 <span className="text-base font-normal text-[#5A5F6B]">today</span>
+                      {pricing ? formatEnrollmentAmount(pricing.first) : "—"} <span className="text-base font-normal text-[#5A5F6B]">today</span>
                     </div>
                     <p className="mt-1 text-xs text-[#5A5F6B]">
-                      Then ₹{secondPartAmount.toLocaleString("en-IN")} before Week 4
+                      Then {secondPartAmount ? formatEnrollmentAmount(secondPartAmount) : "—"} before Week 4
                     </p>
                   </div>
                 </div>
@@ -604,7 +605,7 @@ export default function CheckoutPage() {
                   <div className="flex justify-between">
                     <span>Course fee</span>
                     <span className="font-semibold text-[#0B0C0F]">
-                      ₹{fullPrice.toLocaleString("en-IN")}
+                      {fullPrice ? formatEnrollmentAmount(fullPrice) : "—"}
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -623,7 +624,7 @@ export default function CheckoutPage() {
                     Pay today
                   </span>
                   <span className="text-2xl font-bold tracking-tight text-[#0B0C0F]">
-                    ₹{payTodayAmount.toLocaleString("en-IN")}
+                    {payTodayAmount ? formatEnrollmentAmount(payTodayAmount) : "—"}
                   </span>
                 </div>
 
@@ -639,9 +640,10 @@ export default function CheckoutPage() {
                 </div>
 
                 {/* Pay Button */}
+                {unavailable && <button type="button" onClick={refresh}>Retry loading price</button>}
                 <button
                   type="button"
-                  disabled={isProcessing}
+                  disabled={isProcessing || !pricing}
                   onClick={handlePayAndEnrol}
                   className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#FF6026] to-[#FF7A45] px-6 py-4 text-sm font-semibold text-white shadow-[0px_4px_16px_rgba(255,96,38,0.35)] transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-70 cursor-pointer"
                 >
@@ -652,7 +654,7 @@ export default function CheckoutPage() {
                     </>
                   ) : (
                     <>
-                      Pay ₹{payTodayAmount.toLocaleString("en-IN")} and enrol
+                      Pay {payTodayAmount ? formatEnrollmentAmount(payTodayAmount) : "—"} and enrol
                       <ArrowRight className="size-4" />
                     </>
                   )}

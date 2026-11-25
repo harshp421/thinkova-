@@ -7,13 +7,15 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Logo } from "@/components/ui/Logo";
 import { LoadingSessionOverlay } from "@/components/ui/LoadingSessionOverlay";
+import { safeAuthRedirect } from "@/lib/auth-redirect";
 import { useAuth } from "@/lib/auth-context";
 
 function SignUpForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const prefilledEmail = searchParams?.get("email") || "";
-  const { signup, loginWithGoogle } = useAuth();
+  const redirect = safeAuthRedirect(searchParams.get("redirectTo"));
+  const { signup } = useAuth();
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState(prefilledEmail);
@@ -64,26 +66,12 @@ function SignUpForm() {
     setIsLoading(false);
 
     if (result.success) {
-      router.push(result.redirectTo || "/tell-us-child");
+      router.push(redirect || result.redirectTo || "/tell-us-child");
     } else {
       setErrorMessage(result.error || "Signup could not be completed. Please try again.");
     }
   };
 
-  const handleGoogleSignUp = async () => {
-    setErrorMessage(null);
-    setIsLoading(true);
-
-    const result = await loginWithGoogle();
-
-    setIsLoading(false);
-
-    if (result.success) {
-      router.push(result.redirectTo || "/tell-us-child");
-    } else {
-      setErrorMessage(result.error || "Google sign-up could not be completed.");
-    }
-  };
 
   return (
     <div className="relative flex min-h-screen w-full flex-col lg:flex-row bg-[#F8F7F4] text-[#0B0C0F]">
@@ -133,7 +121,7 @@ function SignUpForm() {
           {/* Top Pill Toggle (Log in inactive / Sign up active) */}
           <div className="inline-flex w-full rounded-full bg-[#EAE6DE] p-1">
             <Link
-              href="/login"
+              href={redirect ? `/login?redirect=${encodeURIComponent(redirect)}` : "/login"}
               className="w-1/2 rounded-full py-2.5 text-center text-sm font-semibold text-[#5A5F6B] hover:text-[#0B0C0F] transition"
             >
               Log in
@@ -273,25 +261,7 @@ function SignUpForm() {
             </button>
           </form>
 
-          {/* Divider */}
-          <div className="relative my-6 text-center">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-[#E3DFD5]" />
-            </div>
-            <span className="relative bg-[#F8F7F4] px-4 text-xs font-medium text-[#8F94A0]">
-              or
-            </span>
-          </div>
 
-          {/* Continue with Google */}
-          <button
-            type="button"
-            onClick={handleGoogleSignUp}
-            disabled={isLoading}
-            className="flex w-full items-center justify-center gap-3 rounded-2xl border border-[#DCD8CF] bg-white py-3.5 px-6 text-sm font-semibold text-[#0B0C0F] shadow-sm transition hover:bg-[#F2EFE9] active:scale-[0.99]"
-          >
-            Continue with Google
-          </button>
 
           {/* Footer Disclaimer */}
           <p className="mt-8 text-center text-xs leading-[18px] text-[#8F94A0]">

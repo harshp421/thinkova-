@@ -1,8 +1,12 @@
+import { getSessionFromRequest } from "@/lib/auth-session";
 import { NextRequest, NextResponse } from "next/server";
 import { dbManager } from "@/../backend/database/client";
 
 export async function GET(req: NextRequest) {
   try {
+    const session = await getSessionFromRequest(req);
+    if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    if (!["TUTOR", "SUPER_ADMIN"].includes(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     const courseId = req.nextUrl.searchParams.get("courseId") || "robotics-starter";
     const batchId = req.nextUrl.searchParams.get("batchId") || undefined;
 
@@ -24,6 +28,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const session = await getSessionFromRequest(req);
+    if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    if (!["TUTOR", "SUPER_ADMIN"].includes(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     const body = await req.json();
     const courseId = String(body.courseId || "").trim();
     const weekNumber = Number(body.weekNumber || 1);
@@ -35,6 +42,11 @@ export async function POST(req: NextRequest) {
     const notes = body.notes ? String(body.notes).trim() : undefined;
     const batchId = body.batchId ? String(body.batchId).trim() : undefined;
 
+    if (session.role === "TUTOR") {
+      const batch = batchId && await dbManager.schools.getBatch(batchId);
+      const tutor = batch ? await dbManager.schools.getTutor(batch.tutorId) : null;
+      if (tutor?.email.toLowerCase() !== session.email.toLowerCase()) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
     if (!courseId) {
       return NextResponse.json({ error: "Missing required 'courseId' parameter" }, { status: 400 });
     }

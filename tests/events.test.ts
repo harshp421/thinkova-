@@ -1,9 +1,33 @@
-import { describe, it, expect } from "vitest";
+import { defaultDispatcher } from "../backend/notifications/dispatcher";
+import { authenticateParent } from "./fixtures";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { FEATURED_HACKATHON, EVENTS_LIST, AVAILABLE_CLASSMATES } from "../src/data/events-data";
 import { GET as getEvents, POST as postEvents } from "../src/app/api/events/route";
 import { NextRequest } from "next/server";
 
 describe("Events & Hackathon Engine and API", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(["calendar", "remind", "invite_family"])("%s sends only to the signed-in account", async action => {
+    const email = vi.spyOn(defaultDispatcher, "sendEmail").mockResolvedValue({} as Awaited<ReturnType<typeof defaultDispatcher.sendEmail>>);
+    const whatsapp = vi.spyOn(defaultDispatcher, "sendWhatsApp").mockResolvedValue({} as Awaited<ReturnType<typeof defaultDispatcher.sendWhatsApp>>);
+    const request = () => new NextRequest("https://example.test/api/events", {
+      method: "POST",
+      body: JSON.stringify({ action, eventId: EVENTS_LIST[0]!.id, userEmail: "unrelated@example.test", userPhone: "0000000000" }),
+    });
+    expect((await postEvents(request())).status).toBe(401);
+    expect(email).not.toHaveBeenCalled();
+    expect(whatsapp).not.toHaveBeenCalled();
+
+    const signedIn = request();
+    await authenticateParent(signedIn);
+    expect((await postEvents(signedIn)).status).toBe(200);
+    expect(email).toHaveBeenCalledTimes(1);
+    expect(email).toHaveBeenCalledWith(expect.objectContaining({ to: "parent@example.test" }));
+    expect(whatsapp).toHaveBeenCalledTimes(1);
+    expect(whatsapp).toHaveBeenCalledWith(expect.objectContaining({ to: "919876543210" }));
+  });
+
   it("1. Configures featured hackathon matching image 1 and image 3", () => {
     expect(FEATURED_HACKATHON.badgeCategory).toBe("HACKATHON");
     expect(FEATURED_HACKATHON.statusBadge).toBe("Registration open");

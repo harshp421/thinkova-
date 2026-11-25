@@ -12,22 +12,23 @@ import { LoadingSessionOverlay } from "@/components/ui/LoadingSessionOverlay";
 export default function ConfirmationPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { activeStudent, user } = useAuth();
+  const { user } = useAuth();
+  const [receipt, setReceipt] = useState<{ courseId: string; studentName: string; schoolName?: string } | null>(null);
 
   const courseId = searchParams.get("courseId") || "robotics-starter";
-  const course = getCourseById(courseId);
+  const course = getCourseById(receipt?.courseId || courseId);
 
   const orderId = searchParams.get("order_id") || searchParams.get("orderId");
-  const studentName = activeStudent?.fullName || user?.fullName || "Learner";
+  const studentName = receipt?.studentName || user?.fullName || "Learner";
   const studentFirstName = studentName.split(" ")[0];
   const parentEmail = user?.email || "your registered email";
-  const rawPaid = searchParams.get("paid");
+
 
   const [isVerifying, setIsVerifying] = useState(Boolean(orderId));
   const [isPaidVerified, setIsPaidVerified] = useState(false);
   const [verificationError, setVerificationError] = useState<string | null>(null);
   const [paidDisplay, setPaidDisplay] = useState(
-    rawPaid || course.price.toLocaleString("en-IN")
+    ""
   );
 
   const verifyOrderPayment = async (targetOrderId: string) => {
@@ -43,19 +44,10 @@ export default function ConfirmationPage() {
       }
 
       if (data.isPaid || data.cashfreeStatus === "PAID" || data.dbStatus === "PAID") {
+        setReceipt(data);
         setIsPaidVerified(true);
         if (data.amount) {
           setPaidDisplay(Number(data.amount).toLocaleString("en-IN"));
-        }
-        // Sync to local enrolled courses
-        try {
-          const stored = JSON.parse(localStorage.getItem("thinkova_enrolled_courses") || "[]");
-          if (!stored.includes(courseId)) {
-            stored.push(courseId);
-            localStorage.setItem("thinkova_enrolled_courses", JSON.stringify(stored));
-          }
-        } catch {
-          // SSR safe
         }
       } else {
         setIsPaidVerified(false);
@@ -76,17 +68,6 @@ export default function ConfirmationPage() {
     if (orderId) {
       verifyOrderPayment(orderId);
     } else {
-      // Check if user is already enrolled via local storage or active profile
-      try {
-        const stored = JSON.parse(localStorage.getItem("thinkova_enrolled_courses") || "[]");
-        if (stored.includes(courseId)) {
-          setIsPaidVerified(true);
-          setIsVerifying(false);
-          return;
-        }
-      } catch {
-        // Safe SSR
-      }
       setIsPaidVerified(false);
       setVerificationError("No completed payment order reference was provided.");
       setIsVerifying(false);
@@ -168,7 +149,7 @@ export default function ConfirmationPage() {
               {studentFirstName} is enrolled
             </h1>
             <p className="mt-2 text-xs sm:text-sm text-[#667085]">
-              Receipt and class link sent to{" "}
+              Enrollment confirmation for{" "}
               <span className="font-semibold text-[#0B0C0F]">{parentEmail}</span> and WhatsApp.
             </p>
 
@@ -185,12 +166,12 @@ export default function ConfirmationPage() {
               <div className="flex items-center justify-between">
                 <span className="text-[#8F94A0]">Rover kit</span>
                 <span className="font-bold text-[#0B0C0F]">
-                  Waits at {activeStudent?.schoolName || "Banyan Grove School"}
+                  Waits at {receipt?.schoolName || "your school"}
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-[#8F94A0]">Paid</span>
-                <span className="font-bold text-[#0B0C0F]">₹{paidDisplay} · UPI</span>
+                <span className="font-bold text-[#0B0C0F]">₹{paidDisplay}</span>
               </div>
             </div>
 

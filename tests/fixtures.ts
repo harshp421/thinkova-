@@ -1,9 +1,10 @@
+import { createSessionToken } from "../src/lib/auth-session";
 import { dbManager, dbRouter } from "../backend/database/client";
 
-export async function seedDynamicTestData() {
-  dbRouter.setDomainRoute("schools", "memory");
-  dbRouter.setDomainRoute("commerce", "memory");
-  dbRouter.setDomainRoute("default", "memory");
+export async function seedDynamicTestData(driver = "memory") {
+  dbRouter.setDomainRoute("schools", driver);
+  dbRouter.setDomainRoute("commerce", driver);
+  dbRouter.setDomainRoute("default", driver);
   dbManager.memory.clearAll();
 
   // 1. Dynamic School
@@ -150,3 +151,19 @@ export async function seedDynamicTestData() {
   });
 }
 
+
+export async function authenticateParent(request: Request, id = "fixture-parent") {
+  const body = request.method === "POST" ? await request.clone().json() : {};
+  const user = { id, email: body.parentEmail || "parent@example.test", username: body.parentName || "Parent",
+    fullName: body.parentName || "Parent", phone: body.parentPhone || "9876543210", role: "PARENT" as const,
+    isEmailVerified: true, isPhoneVerified: true, createdAt: new Date(), consentTimestamp: new Date() };
+  await dbManager.commerce.upsertUser(user);
+  const token = await createSessionToken({ ...user, userId: id });
+  request.headers.set("Authorization", "Bearer " + token);
+}
+
+export async function createTestSession(payload: Parameters<typeof createSessionToken>[0]) {
+  await dbManager.commerce.upsertUser({ ...payload, id: payload.userId, isPhoneVerified: true,
+    isEmailVerified: true, consentTimestamp: new Date(), createdAt: new Date() });
+  return createSessionToken(payload);
+}

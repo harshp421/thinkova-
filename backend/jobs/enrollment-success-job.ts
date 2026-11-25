@@ -1,3 +1,4 @@
+import { dbRouter } from "../database/router/db-router";
 import type { JobDefinition } from "../cron/types";
 import type { EnrolmentSuccessRecord } from "../aggregators/types";
 import { preAggregators } from "../aggregators";
@@ -5,6 +6,21 @@ import { dbManager } from "../database/client";
 import { emailTemplates } from "../templates/email-templates";
 import { whatsappTemplates } from "../templates/whatsapp-templates";
 import { defaultDispatcher } from "../notifications/dispatcher";
+
+// Reserve each delivery before contacting the provider. An interrupted delivery
+// stays pending for reconciliation because its provider outcome is unknown.
+async function deliverOnce(id: string, send: () => Promise<{ status: string }>) {
+  const state = await dbRouter.commerceTransaction(async () => {
+    const previous = await dbRouter.get<{ status: string }>("enrollment_deliveries", id, "commerce");
+    if (previous) return previous.status;
+    await dbRouter.upsert("enrollment_deliveries", { id, status: "PENDING", createdAt: new Date() }, "commerce");
+    return "CLAIMED";
+  });
+  if (state !== "CLAIMED") return state === "SENT";
+  const result = await send();
+  await dbRouter.update("enrollment_deliveries", id, { status: result.status }, "commerce");
+  return result.status === "SENT";
+}
 
 export const enrollmentSuccessJob: JobDefinition<EnrolmentSuccessRecord> = {
   id: "job.enrollment_success_dispatch",
@@ -33,7 +49,7 @@ export const enrollmentSuccessJob: JobDefinition<EnrolmentSuccessRecord> = {
       });
 
       // 1. Dispatch Email
-      await defaultDispatcher.sendEmail({
+      const emailSent = await deliverOnce(record.orderId + ":email", () => defaultDispatcher.sendEmail({
         to: record.parentEmail,
         subject: email.subject,
         html: email.html,
@@ -42,10 +58,10 @@ export const enrollmentSuccessJob: JobDefinition<EnrolmentSuccessRecord> = {
           orderId: record.orderId,
           schoolUid: record.schoolUid,
         },
-      });
+      }));
 
       // 2. Dispatch WhatsApp Confirmation
-      await defaultDispatcher.sendWhatsApp({
+      const whatsAppSent = !record.parentPhone || await deliverOnce(record.orderId + ":whatsapp", () => defaultDispatcher.sendWhatsApp({
         to: record.parentPhone,
         templateName: wa.templateName,
         fallbackText: wa.fallbackText,
@@ -53,7 +69,8 @@ export const enrollmentSuccessJob: JobDefinition<EnrolmentSuccessRecord> = {
         metadata: {
           orderId: record.orderId,
         },
-      });
+      }));
+      if (!emailSent || !whatsAppSent) continue;
 
       // Mark order in dynamic database
       await dbManager.commerce.markAlertSent("ENROLMENT", record.orderId);

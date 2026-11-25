@@ -7,15 +7,17 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, ShieldCheck } from "lucide-react";
 import { Logo } from "@/components/ui/Logo";
 import { LoadingSessionOverlay } from "@/components/ui/LoadingSessionOverlay";
+import { safeAuthRedirect } from "@/lib/auth-redirect";
 import { useAuth } from "@/lib/auth-context";
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectParam = searchParams.get("redirect");
+  const redirectParam = safeAuthRedirect(searchParams.get("redirect"));
+  const signupHref = redirectParam ? `/signup?redirectTo=${encodeURIComponent(redirectParam)}` : "/signup";
   const roleParam = searchParams.get("role");
   const errorParam = searchParams.get("error");
-  const { login, loginWithGoogle } = useAuth();
+  const { login } = useAuth();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -27,7 +29,7 @@ function LoginForm() {
   const isTutorRequested = roleParam === "tutor" || errorParam === "tutor_only";
 
   const handleSuccessfulAuth = (defaultRedirect: string) => {
-    if (redirectParam && redirectParam.startsWith("/") && !redirectParam.startsWith("//")) {
+    if (redirectParam) {
       router.push(redirectParam);
     } else {
       router.push(defaultRedirect || "/who-is-learning");
@@ -60,19 +62,6 @@ function LoginForm() {
     }
   };
 
-  const handleGoogleSignIn = async () => {
-    setErrorMessage(null);
-    setIsLoading(true);
-
-    const result = await loginWithGoogle();
-    setIsLoading(false);
-
-    if (result.success) {
-      handleSuccessfulAuth(result.redirectTo);
-    } else {
-      setErrorMessage(result.error || "Google sign-in could not be completed.");
-    }
-  };
 
   return (
     <div className="relative flex min-h-screen w-full flex-col lg:flex-row bg-[#F8F7F4] text-[#0B0C0F]">
@@ -128,7 +117,7 @@ function LoginForm() {
               Log in
             </button>
             <Link
-              href="/signup"
+              href={signupHref}
               className="w-1/2 rounded-full py-2.5 text-center text-sm font-semibold text-[#5A5F6B] hover:text-[#0B0C0F] transition"
             >
               Sign up
@@ -165,7 +154,7 @@ function LoginForm() {
               {showSignupPrompt && (
                 <div className="mt-3 pt-2.5 border-t border-red-200/60">
                   <Link
-                    href={`/signup?email=${encodeURIComponent(email.trim())}`}
+                    href={`${signupHref}${redirectParam ? "&" : "?"}email=${encodeURIComponent(email.trim())}`}
                     className="inline-flex items-center gap-1 font-bold text-[#FF6026] hover:underline"
                   >
                     <span>Click here to sign up with {email.trim()} &rarr;</span>
@@ -241,30 +230,12 @@ function LoginForm() {
             </button>
           </form>
 
-          {/* Divider */}
-          <div className="relative my-6 text-center">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-[#E3DFD5]" />
-            </div>
-            <span className="relative bg-[#F8F7F4] px-4 text-xs font-medium text-[#8F94A0]">
-              or
-            </span>
-          </div>
 
-          {/* Continue with Google */}
-          <button
-            type="button"
-            onClick={handleGoogleSignIn}
-            disabled={isLoading}
-            className="flex w-full items-center justify-center gap-3 rounded-2xl border border-[#DCD8CF] bg-white py-3.5 px-6 text-sm font-semibold text-[#0B0C0F] shadow-sm transition hover:bg-[#F2EFE9] active:scale-[0.99]"
-          >
-            Continue with Google
-          </button>
 
           {/* Footer Link */}
           <p className="mt-8 text-center text-xs text-[#5A5F6B]">
             New to Thinkova?{" "}
-            <Link href="/signup" className="font-semibold text-[#FF6026] hover:underline">
+            <Link href={signupHref} className="font-semibold text-[#FF6026] hover:underline">
               Create a parent account
             </Link>
           </p>

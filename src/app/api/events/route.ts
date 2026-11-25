@@ -53,17 +53,18 @@ export async function POST(req: NextRequest) {
       const eventId = String(body.eventId || "");
       const session = await getSessionFromRequest(req);
 
-      let user = session?.userId ? await dbManager.commerce.getUserById(session.userId) : null;
-      const userEmail = body.userEmail || user?.email;
-      const userPhone = body.userPhone || user?.phone;
-      const userName = body.userName || user?.fullName || user?.username || "Parent";
-
-      // Mandatory signup/login check: unauthenticated users cannot set reminders
-      if (!userEmail && !userPhone) {
+      const user = session && await dbManager.commerce.getUserById(session.userId);
+      if (!user) {
         return NextResponse.json(
           { error: "Please log in or sign up to receive event reminders on WhatsApp and email." },
           { status: 401 }
         );
+      }
+      const userEmail = user.email;
+      const userPhone = user.phone;
+      const userName = user.fullName || user.username || "Parent";
+      if (!userEmail && !userPhone) {
+        return NextResponse.json({ error: "Add a contact method to your account." }, { status: 422 });
       }
 
       const event =
@@ -88,7 +89,7 @@ export async function POST(req: NextRequest) {
             html: `
               <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #0B0C0F; background: #F4F3EE; border-radius: 16px;">
                 <h2 style="color: #FF6026;">🔔 Live Event Reminder</h2>
-                <p>Hello <strong>${userName}</strong>,</p>
+                <p>Hello <strong>${userName.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</strong>,</p>
                 <p>You have set a reminder for <strong>${eventTitle}</strong>.</p>
                 <div style="background: white; border-radius: 12px; padding: 16px; margin: 20px 0; border: 1px solid #E3E0D9;">
                   <p style="margin: 0; font-weight: bold; font-size: 16px;">${eventTitle}</p>

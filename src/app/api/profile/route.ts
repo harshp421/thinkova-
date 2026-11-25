@@ -1,3 +1,4 @@
+import { dbRouter } from "@/../backend/database/router/db-router";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionFromRequest, createSessionToken, setSessionCookie } from "@/lib/auth-session";
 import { dbManager } from "@/../backend/database/client";
@@ -116,6 +117,7 @@ export async function POST(req: NextRequest) {
       reminders,
     });
 
+    await dbRouter.delete("sessions", session.sessionId, "commerce");
     setSessionCookie(response, token);
     return response;
   } catch (err: unknown) {

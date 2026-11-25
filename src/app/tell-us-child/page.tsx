@@ -25,6 +25,8 @@ const topics: TrackTopic[] = [
 export default function TellUsChildPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const checkoutCourse = searchParams.get("courseId");
+  const checkoutPlan = searchParams.get("plan");
   const isAddingSibling =
     searchParams.get("sibling") === "true" ||
     searchParams.get("addSibling") === "true" ||
@@ -48,10 +50,14 @@ export default function TellUsChildPage() {
       if (!user) {
         router.replace("/signup?redirectTo=/tell-us-child");
       } else if ((students.length > 0 || activeStudent) && !isAddingSibling) {
-        router.replace("/who-is-learning");
+        if (checkoutCourse) {
+          router.replace(`/checkout?${new URLSearchParams({ courseId: checkoutCourse, plan: checkoutPlan || "full" })}`);
+        } else {
+          router.replace("/who-is-learning");
+        }
       }
     }
-  }, [authLoading, user, students, activeStudent, isAddingSibling, router]);
+  }, [authLoading, user, students, activeStudent, isAddingSibling, checkoutCourse, checkoutPlan, router]);
 
   const toggleTopic = (id: string) => {
     if (selectedTopics.includes(id)) {
@@ -89,6 +95,13 @@ export default function TellUsChildPage() {
     setIsLoading(false);
 
     if (result.success && result.student) {
+      if (checkoutCourse) {
+        const selection = new URLSearchParams({
+          courseId: checkoutCourse, plan: checkoutPlan || "full", studentId: result.student.id,
+        });
+        router.push(`/checkout?${selection}`);
+        return;
+      }
       // Sibling enrolment rule: if another student is added the parent should enroll that student
       if (isAddingSibling && result.recommendedEnrollUrl) {
         router.push(result.recommendedEnrollUrl);

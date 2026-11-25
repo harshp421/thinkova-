@@ -1,3 +1,5 @@
+import { dbRouter } from "@/../backend/database/router/db-router";
+import { requireStudentAccess } from "@/lib/student-access";
 import { NextRequest, NextResponse } from "next/server";
 import {
   TASK_DEFINITIONS,
@@ -5,17 +7,17 @@ import {
   BuildSubmissionRecord,
 } from "@/data/learning-tasks";
 
-// In-memory submissions store keyed by `${studentId}:${taskId}`
-const submissionsStore: Record<string, BuildSubmissionRecord> = {};
 
 export async function GET(req: NextRequest) {
-  const studentId = req.nextUrl.searchParams.get("studentId") || "learner";
+  const studentId = req.nextUrl.searchParams.get("studentId") || "";
+  const denied = await requireStudentAccess(req, studentId);
+  if (denied) return denied;
   const taskId = req.nextUrl.searchParams.get("taskId") || "level-1-problem-map";
 
   const taskDef = TASK_DEFINITIONS[taskId] || TASK_DEFINITIONS["level-6-memory"]!;
   const key = `${studentId}:${taskId}`;
 
-  const existing = submissionsStore[key] || {
+  const existing = await dbRouter.get<BuildSubmissionRecord>("build_submissions", key, "commerce") || {
     submissionId: `sub_${studentId}_${taskId}`,
     studentId,
     taskId,
@@ -37,7 +39,9 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const action = body.action || "save_draft"; // "save_draft" | "submit_build" | "review"
-    const studentId = String(body.studentId || "learner");
+    const studentId = String(body.studentId || "");
+    const denied = await requireStudentAccess(req, studentId, action === "review");
+    if (denied) return denied;
     const taskId = String(body.taskId || "level-1-problem-map");
     const taskDef = TASK_DEFINITIONS[taskId] || TASK_DEFINITIONS["level-6-memory"]!;
     const key = `${studentId}:${taskId}`;
@@ -50,7 +54,7 @@ export async function POST(req: NextRequest) {
         body.feedback ||
         "Clear blueprint. Next time, write down one thing that could go wrong and how your agent should handle it.";
 
-      const existing = submissionsStore[key] || {
+      const existing = await dbRouter.get<BuildSubmissionRecord>("build_submissions", key, "commerce") || {
         submissionId: `sub_${studentId}_${taskId}`,
         studentId,
         taskId,
@@ -71,7 +75,7 @@ export async function POST(req: NextRequest) {
         feedback,
       };
 
-      submissionsStore[key] = existing;
+      await dbRouter.upsert("build_submissions", { ...existing, id: key }, "commerce");
 
       return NextResponse.json({
         success: true,
@@ -99,7 +103,7 @@ export async function POST(req: NextRequest) {
       submittedAt: isSubmit ? new Date().toISOString() : undefined,
     };
 
-    submissionsStore[key] = record;
+    await dbRouter.upsert("build_submissions", { ...record, id: key }, "commerce");
 
     return NextResponse.json({
       success: true,
