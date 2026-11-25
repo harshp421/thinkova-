@@ -64,45 +64,22 @@ export function BuildTaskSection({
     setActiveTaskData(def);
     setTaskFiles([def.defaultFile]);
     setStudentBuildNote(def.defaultNote);
-  }, [activeTaskId]);
+  }, [activeTaskId, studentId]);
 
-  // Fetch task submission status from localStorage and backend
+  // Fetch the authorized submission when switching students or tasks.
   useEffect(() => {
-    // 1. Instant local storage restoration
-    if (typeof window !== "undefined") {
-      try {
-        const cached = localStorage.getItem(`thinkova_sub_${studentId}_${activeTaskId}`);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (parsed.files && parsed.files.length > 0) {
-            setTaskFiles(parsed.files);
-          }
-          if (parsed.note) {
-            setStudentBuildNote(parsed.note);
-          }
-          if (parsed.status === "submitted") {
-            setBuildTaskSubmissionStatus("submitted");
-            setIsBuildJustSubmitted(true);
-            setTaskDraftStatusText("Submitted just now");
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    // 2. Fetch from backend route
+    const controller = new AbortController();
     async function loadBuildTask() {
       try {
         const res = await fetch(
-          `/api/learning/build-task?studentId=${studentId}&taskId=${activeTaskId}`
+          `/api/learning/build-task?studentId=${studentId}&taskId=${activeTaskId}`, { signal: controller.signal }
         );
         if (res.ok) {
           const data = await res.json();
           if (data.task) {
             setActiveTaskData(data.task);
           }
-          if (data.submission) {
+          if (!controller.signal.aborted && data.submission) {
             if (data.submission.files && data.submission.files.length > 0) {
               setTaskFiles(data.submission.files);
             }
@@ -125,6 +102,7 @@ export function BuildTaskSection({
       }
     }
     loadBuildTask();
+    return () => controller.abort();
   }, [studentId, activeTaskId]);
 
   // Real File Upload Handler (triggers native file input)
@@ -209,21 +187,6 @@ export function BuildTaskSection({
   const handleSaveAndSubmitBuild = async () => {
     setIsSubmittingBuild(true);
     try {
-      // 1. Save to localStorage immediately
-      if (typeof window !== "undefined") {
-        const payload = {
-          status: "submitted",
-          submittedAt: new Date().toISOString(),
-          files: taskFiles,
-          note: studentBuildNote,
-        };
-        localStorage.setItem(
-          `thinkova_sub_${studentId}_${activeTaskId}`,
-          JSON.stringify(payload)
-        );
-      }
-
-      // 2. Sync with backend API
       const res = await fetch("/api/learning/build-task", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -235,7 +198,8 @@ export function BuildTaskSection({
           note: studentBuildNote,
         }),
       });
-      if (res.ok) {
+      if (!res.ok) throw new Error("Submission failed");
+      {
         const data = await res.json();
         if (data.submission?.review) {
           setTaskReviewData(data.submission.review);
@@ -245,9 +209,7 @@ export function BuildTaskSection({
       setIsBuildJustSubmitted(true);
       setTaskDraftStatusText("Submitted just now");
     } catch {
-      setBuildTaskSubmissionStatus("submitted");
-      setIsBuildJustSubmitted(true);
-      setTaskDraftStatusText("Submitted just now");
+      setTaskDraftStatusText("Submission could not be saved");
     } finally {
       setIsSubmittingBuild(false);
     }
@@ -256,19 +218,7 @@ export function BuildTaskSection({
   const handleSaveBuildDraftOnly = async () => {
     setTaskDraftStatusText("Saving draft...");
     try {
-      if (typeof window !== "undefined") {
-        const payload = {
-          status: "draft_saved",
-          savedAt: new Date().toISOString(),
-          files: taskFiles,
-          note: studentBuildNote,
-        };
-        localStorage.setItem(
-          `thinkova_sub_${studentId}_${activeTaskId}`,
-          JSON.stringify(payload)
-        );
-      }
-      await fetch("/api/learning/build-task", {
+      const response = await fetch("/api/learning/build-task", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -279,9 +229,9 @@ export function BuildTaskSection({
           note: studentBuildNote,
         }),
       });
-      setTaskDraftStatusText("Draft saved just now");
+      setTaskDraftStatusText(response.ok ? "Draft saved just now" : "Draft could not be saved");
     } catch {
-      setTaskDraftStatusText("Draft saved just now");
+      setTaskDraftStatusText("Draft could not be saved");
     }
   };
 

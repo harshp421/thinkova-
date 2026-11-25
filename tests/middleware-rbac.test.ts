@@ -1,3 +1,4 @@
+import { createTestSession } from "./fixtures";
 import { describe, it, expect, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { proxy } from "../src/proxy";
@@ -10,7 +11,7 @@ describe("Next.js Edge Proxy & Role-Based Access Control (RBAC)", () => {
   });
 
   it("1. Edge Web Crypto helper correctly validates and decodes valid session tokens", async () => {
-    const token = await createSessionToken({
+    const token = await createTestSession({
       userId: "usr_parent_edge_1",
       email: "parent@thinkova.ai",
       username: "parent1",
@@ -26,7 +27,7 @@ describe("Next.js Edge Proxy & Role-Based Access Control (RBAC)", () => {
   });
 
   it("2. Edge Web Crypto helper rejects tampered tokens", async () => {
-    const token = await createSessionToken({
+    const token = await createTestSession({
       userId: "usr_parent_edge_1",
       email: "parent@thinkova.ai",
       username: "parent1",
@@ -62,7 +63,7 @@ describe("Next.js Edge Proxy & Role-Based Access Control (RBAC)", () => {
   });
 
   it("5. Authenticated PARENT accessing /tutor is redirected away to /who-is-learning", async () => {
-    const parentToken = await createSessionToken({
+    const parentToken = await createTestSession({
       userId: "usr_parent_403",
       email: "parent@gmail.com",
       username: "parent403",
@@ -84,7 +85,7 @@ describe("Next.js Edge Proxy & Role-Based Access Control (RBAC)", () => {
   });
 
   it("6. Authenticated PARENT accessing /api/tutor/batches receives HTTP 403 Forbidden JSON", async () => {
-    const parentToken = await createSessionToken({
+    const parentToken = await createTestSession({
       userId: "usr_parent_403",
       email: "parent@gmail.com",
       username: "parent403",
@@ -106,7 +107,7 @@ describe("Next.js Edge Proxy & Role-Based Access Control (RBAC)", () => {
   });
 
   it("7. Authenticated TUTOR accessing /tutor is allowed and receives injected context headers", async () => {
-    const tutorToken = await createSessionToken({
+    const tutorToken = await createTestSession({
       userId: "tutor_lead_01",
       email: "rohit.tutor@thinkova.ai",
       username: "rohit_tutor",
@@ -129,7 +130,7 @@ describe("Next.js Edge Proxy & Role-Based Access Control (RBAC)", () => {
   });
 
   it("8. Authenticated SUPER_ADMIN accessing /api/tutor/batches is allowed through", async () => {
-    const adminToken = await createSessionToken({
+    const adminToken = await createTestSession({
       userId: "admin_01",
       email: "admin@thinkova.ai",
       username: "superadmin",
@@ -159,7 +160,7 @@ describe("Next.js Edge Proxy & Role-Based Access Control (RBAC)", () => {
   });
 
   it("10. Authenticated PARENT accessing /learning/std_anvith_01 is allowed through", async () => {
-    const parentToken = await createSessionToken({
+    const parentToken = await createTestSession({
       userId: "usr_parent_anvith",
       email: "gunvanth@thinkova.ai",
       username: "gunvanth",

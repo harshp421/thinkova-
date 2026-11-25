@@ -16,6 +16,11 @@ const nextConfig: NextConfig = {
     imageSizes: [200, 240, 480],
     qualities: [75, 85, 90, 95, 100],
   },
+  async headers() {
+    return ["/api/auth/:path*", "/api/students", "/api/profile/:path*", "/api/tutor/:path*", "/api/learning/:path*", "/api/cashfree/order", "/api/cashfree/refund"].map(source => ({
+      source, headers: [{ key: "Cache-Control", value: "private, no-store" }],
+    }));
+  },
   async redirects() {
     return [
       {

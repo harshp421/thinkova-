@@ -1,5 +1,9 @@
 # ThinkOva — Complete Backend Architecture Plan
 
+## Runtime database support
+
+The current application uses MongoDB for school and commerce data. Production commerce requires a MongoDB deployment that supports transactions. Local development can use process memory by leaving the database URLs unset. The PostgreSQL references below describe the original architecture proposal. The application rejects PostgreSQL and SQLite connection URLs.
+
 ## Executive Summary
 Thinkova is an in-school cohort-based AI education program for school students (Grades 5–8) delivered through partner school computer labs. This document defines a production-ready, highly concurrent backend architecture covering:
 - **Dual-Database Strategy** (School Management DB & Student/Commerce DB)

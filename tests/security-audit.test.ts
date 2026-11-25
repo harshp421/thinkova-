@@ -1,3 +1,5 @@
+import { createTestSession } from "./fixtures";
+import { authenticateParent } from "./fixtures";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 import crypto from "crypto";
@@ -10,6 +12,7 @@ import {
   GET as getNotificationStatus,
   POST as postNotificationStatus,
 } from "../src/app/api/notifications/status/route";
+import { GET as getCron, POST as postCron } from "../src/app/api/cron/route";
 import { dbManager } from "../backend/database/client";
 import { hashPassword } from "../backend/auth/crypto";
 import {
@@ -142,7 +145,7 @@ describe("[SEC-01] Open Email Relay Prevention Guard", () => {
   });
 
   it("6. Allows live dispatch when authenticated as SUPER_ADMIN or TUTOR", async () => {
-    const adminToken = await createSessionToken({
+    const adminToken = await createTestSession({
       userId: "usr_admin_test_1",
       email: "admin@thinkova.ai",
       username: "admin1",
@@ -171,7 +174,7 @@ describe("[SEC-01] Open Email Relay Prevention Guard", () => {
   });
 
   it("7. Rejects live dispatch when authenticated user role is PARENT", async () => {
-    const parentToken = await createSessionToken({
+    const parentToken = await createTestSession({
       userId: "usr_parent_test_1",
       email: "parent@example.com",
       username: "parent1",
@@ -249,7 +252,7 @@ describe("[SEC-02] Session Secret Cryptographic Strength & Production Fallback E
   it("5. createSessionToken and verifySessionToken work seamlessly with dynamic strong secret", async () => {
     process.env.AUTH_SECRET = "super_strong_custom_session_secret_key_99999_xyz";
 
-    const token = await createSessionToken({
+    const token = await createTestSession({
       userId: "usr_dynamic_test",
       email: "secure@thinkova.ai",
       username: "secuser",
@@ -271,7 +274,7 @@ describe("[SEC-02] Session Secret Cryptographic Strength & Production Fallback E
   it("6. Tokens fail verification when verified against an incorrect secret", async () => {
     process.env.AUTH_SECRET = "initial_secret_key_must_be_32_characters_long_111";
 
-    const token = await createSessionToken({
+    const token = await createTestSession({
       userId: "usr_attacker",
       email: "attacker@thinkova.ai",
       username: "attacker",
@@ -393,6 +396,7 @@ describe("[SEC-04] Client-Controlled Pricing Tampering in Cashfree Order Creatio
     process.env.CASHFREE_APP_ID = "CF_APP_TEST_123456";
     process.env.CASHFREE_SECRET_KEY = "cf_sec_key_abcdef123456";
     process.env.CASHFREE_ENV = "SANDBOX";
+    process.env.CASHFREE_SITE_URL = "https://sandbox.example.test";
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async (url: any) => {
       const urlStr = String(url);
@@ -431,6 +435,7 @@ describe("[SEC-04] Client-Controlled Pricing Tampering in Cashfree Order Creatio
       }),
     });
 
+    await authenticateParent(req);
     const res = await postCashfreeOrder(req);
     expect(res.status).toBe(400);
 
@@ -453,6 +458,7 @@ describe("[SEC-04] Client-Controlled Pricing Tampering in Cashfree Order Creatio
       }),
     });
 
+    await authenticateParent(req);
     const res = await postCashfreeOrder(req);
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -469,10 +475,12 @@ describe("[SEC-04] Client-Controlled Pricing Tampering in Cashfree Order Creatio
         parentEmail: "sanjay@example.com",
         parentPhone: "9876543210",
         schoolUid: "DPS-PUN-01",
+        courseId: "ai-study-helper",
         amountInRupees: 4499,
       }),
     });
 
+    await authenticateParent(req);
     const res = await postCashfreeOrder(req);
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -621,7 +629,7 @@ describe("[SEC-06] Unauthenticated WhatsApp & Email Dispatch Guard (/api/notific
   });
 
   it("4. Rejects PARENT role session with 403 Forbidden", async () => {
-    const parentToken = await createSessionToken({
+    const parentToken = await createTestSession({
       userId: "usr_parent_diag_test",
       email: "parent@example.com",
       username: "parentuser",
@@ -661,7 +669,7 @@ describe("[SEC-06] Unauthenticated WhatsApp & Email Dispatch Guard (/api/notific
   });
 
   it("6. Allows POST /api/notifications/status manual dispatch when authenticated as SUPER_ADMIN", async () => {
-    const adminToken = await createSessionToken({
+    const adminToken = await createTestSession({
       userId: "usr_admin_diag_test",
       email: "admin@thinkova.ai",
       username: "adminuser",
@@ -687,5 +695,73 @@ describe("[SEC-06] Unauthenticated WhatsApp & Email Dispatch Guard (/api/notific
     const data = await res.json();
     expect(data.status).toBe("ok");
     expect(data.dispatched).toBeDefined();
+  });
+});
+
+describe("[SEC-07] Cron Execution Fail-Closed Guard (/api/cron)", () => {
+  const originalCronSecret = process.env.CRON_SECRET;
+  const originalInternalKey = process.env.INTERNAL_API_KEY;
+
+  afterEach(() => {
+    process.env.CRON_SECRET = originalCronSecret;
+    process.env.INTERNAL_API_KEY = originalInternalKey;
+  });
+
+  it("1. Fails closed with 503 on GET /api/cron?run=true when CRON_SECRET and INTERNAL_API_KEY are unset", async () => {
+    delete process.env.CRON_SECRET;
+    delete process.env.INTERNAL_API_KEY;
+
+    const req = new Request("http://localhost:3000/api/cron?run=true");
+    const res = await getCron(req);
+    expect(res.status).toBe(503);
+
+    const data = await res.json();
+    expect(data.code).toBe("ERR_CRON_SECRET_UNSET");
+  });
+
+  it("2. Fails closed with 503 on POST /api/cron when CRON_SECRET and INTERNAL_API_KEY are unset", async () => {
+    delete process.env.CRON_SECRET;
+    delete process.env.INTERNAL_API_KEY;
+
+    const req = new Request("http://localhost:3000/api/cron", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runAll: true }),
+    });
+    const res = await postCron(req);
+    expect(res.status).toBe(503);
+
+    const data = await res.json();
+    expect(data.code).toBe("ERR_CRON_SECRET_UNSET");
+  });
+
+  it("3. Rejects unauthenticated GET /api/cron?run=true and POST /api/cron with 401 when CRON_SECRET is set", async () => {
+    process.env.CRON_SECRET = "cron_secret_fail_closed_test_2026";
+    delete process.env.INTERNAL_API_KEY;
+
+    const getRes = await getCron(new Request("http://localhost:3000/api/cron?run=true"));
+    expect(getRes.status).toBe(401);
+
+    const postRes = await postCron(
+      new Request("http://localhost:3000/api/cron", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer wrong_secret",
+        },
+        body: JSON.stringify({ runAll: true }),
+      })
+    );
+    expect(postRes.status).toBe(401);
+  });
+
+  it("4. Still allows unauthenticated GET /api/cron diagnostics without ?run=true", async () => {
+    delete process.env.CRON_SECRET;
+    delete process.env.INTERNAL_API_KEY;
+
+    const res = await getCron(new Request("http://localhost:3000/api/cron"));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.status).toBe("ok");
   });
 });

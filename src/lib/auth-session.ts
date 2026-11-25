@@ -1,6 +1,7 @@
+import { dbRouter } from "@/../backend/database/router/db-router";
 import crypto from "crypto";
 import { cookies } from "next/headers";
-import type { NextRequest, NextResponse } from "next/server";
+import type { NextResponse } from "next/server";
 
 export const SESSION_COOKIE_NAME = "thinkova_session";
 const INSECURE_DEFAULT_SECRET = "thinkova_secure_parent_session_secret_key_2026";
@@ -47,6 +48,7 @@ export interface AuthSessionPayload {
   fullName: string;
   phone?: string;
   role: "PARENT" | "TUTOR" | "SCHOOL_ADMIN" | "SUPER_ADMIN";
+  sessionId: string;
   createdAt: number;
   expiresAt: number;
 }
@@ -63,12 +65,13 @@ function base64UrlDecode(str: string): string {
  * Creates a signed HMAC-SHA256 session token
  */
 export async function createSessionToken(
-  payload: Omit<AuthSessionPayload, "createdAt" | "expiresAt">
+  payload: Omit<AuthSessionPayload, "createdAt" | "expiresAt" | "sessionId">
 ): Promise<string> {
   const secret = getSessionSecret();
   const now = Date.now();
   const fullPayload: AuthSessionPayload = {
     ...payload,
+    sessionId: crypto.randomUUID(),
     createdAt: now,
     expiresAt: now + SESSION_MAX_AGE_SECONDS * 1000,
   };
@@ -78,6 +81,7 @@ export async function createSessionToken(
   const data = `${header}.${body}`;
   const signature = crypto.createHmac("sha256", secret).update(data).digest("base64url");
 
+  await dbRouter.upsert("sessions", { id: fullPayload.sessionId, userId: payload.userId, expiresAt: new Date(fullPayload.expiresAt) }, "commerce");
   return `${data}.${signature}`;
 }
 
@@ -109,27 +113,31 @@ export async function verifySessionToken(token: string): Promise<AuthSessionPayl
     return null;
   }
 
+  let payload: AuthSessionPayload;
   try {
-    const payload = JSON.parse(base64UrlDecode(body)) as AuthSessionPayload;
-    if (payload.expiresAt && Date.now() > payload.expiresAt) {
+    payload = JSON.parse(base64UrlDecode(body)) as AuthSessionPayload;
+    if (!payload.sessionId || !Number.isFinite(payload.expiresAt) || Date.now() >= payload.expiresAt) {
       return null;
     }
-    return payload;
   } catch {
     return null;
   }
+  const session = await dbRouter.get<{ userId: string }>("sessions", payload.sessionId, "commerce");
+  if (session?.userId !== payload.userId) return null;
+  const account = await dbRouter.get<{ role: string; email: string }>("users", payload.userId, "commerce");
+  return account?.role === payload.role && account.email === payload.email ? payload : null;
 }
 
 /**
  * Reads the session token from Request cookies or Authorization header
  */
 export async function getSessionFromRequest(
-  request?: NextRequest
+  request?: Request
 ): Promise<AuthSessionPayload | null> {
   let token: string | undefined;
 
   if (request) {
-    token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+    token = request.headers.get("cookie")?.split(";").map(cookie => cookie.trim()).find(cookie => cookie.startsWith(SESSION_COOKIE_NAME + "="))?.slice(SESSION_COOKIE_NAME.length + 1);
     if (!token) {
       const authHeader = request.headers.get("authorization");
       if (authHeader?.startsWith("Bearer ")) {

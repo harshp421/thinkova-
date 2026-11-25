@@ -6,9 +6,7 @@ import type {
   QueryOptions,
 } from "../drivers/interface";
 import { MemoryDatabaseDriver } from "../drivers/memory-driver";
-import { PostgresDatabaseDriver } from "../drivers/postgres-driver";
 import { MongoDatabaseDriver } from "../drivers/mongo-driver";
-import { SqliteDatabaseDriver } from "../drivers/sqlite-driver";
 import { UniversalSchemaMapper } from "../schema/mapper";
 
 export type DomainPartition = "schools" | "commerce" | "default";
@@ -20,10 +18,7 @@ export interface DatabaseRouterConfig {
 }
 
 /**
- * Pre-High Stable Database Router
- * Universal routing layer that dynamically dispatches database queries to ANY storage engine:
- * PostgreSQL, MongoDB, SQLite, In-Memory, MySQL, DynamoDB, or custom drivers.
- * Provides protocol auto-detection, domain partitioning, and circuit-breaker failover.
+ * Routes database domains to MongoDB, memory, or an explicitly registered driver.
  */
 export class DatabaseRouter {
   private drivers: Map<string, IDatabaseDriver> = new Map();
@@ -36,7 +31,7 @@ export class DatabaseRouter {
   constructor(config?: DatabaseRouterConfig) {
     this.config = {
       defaultDriver: config?.defaultDriver || "memory",
-      fallbackToMemory: config?.fallbackToMemory ?? true,
+      fallbackToMemory: config?.fallbackToMemory ?? (process.env.NODE_ENV !== "production"),
       circuitBreakerThreshold: config?.circuitBreakerThreshold ?? 3,
     };
 
@@ -115,22 +110,14 @@ export class DatabaseRouter {
     if (!rawUri) return null;
     const uri = rawUri.trim().replace(/^["']|["']$/g, "").trim();
 
-    if (uri.startsWith("postgres://") || uri.startsWith("postgresql://")) {
-      return new PostgresDatabaseDriver(uri);
-    }
     if (uri.startsWith("mongodb://") || uri.startsWith("mongodb+srv://")) {
       return new MongoDatabaseDriver(uri);
-    }
-    if (uri.startsWith("sqlite://") || uri.startsWith("file:") || uri.endsWith(".db")) {
-      return new SqliteDatabaseDriver(uri);
     }
     if (uri.startsWith("memory://")) {
       return new MemoryDatabaseDriver();
     }
 
-    // Unknown protocol: fallback to memory driver with warning
-    console.warn(`[DatabaseRouter] Unrecognized URI protocol for '${name}': "${uri.slice(0, 15)}...". Defaulting to memory driver.`);
-    return null;
+    throw new Error(`Unsupported database URL for '${name}'. Use a MongoDB URL or memory:// for local development.`);
   }
 
   /**
@@ -143,7 +130,7 @@ export class DatabaseRouter {
   }
 
   /**
-   * Sets domain partitioning route (e.g. route 'schools' to PostgreSQL and 'commerce' to MongoDB)
+   * Sets domain partitioning route (e.g. route 'schools' and 'commerce' to separate MongoDB databases)
    */
   public setDomainRoute(domain: DomainPartition, driverName: string) {
     if (!this.drivers.has(driverName)) {
@@ -159,7 +146,7 @@ export class DatabaseRouter {
   /**
    * Resolves the active driver for a given domain with circuit-breaker protection.
    */
-  public getDriverForDomain(domain: DomainPartition = "default"): IDatabaseDriver {
+  private getRouteName(domain: DomainPartition): string {
     let driverName = this.domainRoutes.get(domain) || this.domainRoutes.get("default") || this.config.defaultDriver;
 
     // If still using default memory driver, check if environment variables are now populated
@@ -168,6 +155,14 @@ export class DatabaseRouter {
       driverName = this.domainRoutes.get(domain) || this.domainRoutes.get("default") || this.config.defaultDriver;
     }
 
+    return driverName;
+  }
+
+  public getDriverForDomain(domain: DomainPartition = "default"): IDatabaseDriver {
+    return this.getActiveDriver(this.getRouteName(domain));
+  }
+
+  private getActiveDriver(driverName: string): IDatabaseDriver {
     // Check circuit breaker status
     if (this.circuitBreakerTripped.get(driverName)) {
       if (this.config.fallbackToMemory) {
@@ -186,12 +181,17 @@ export class DatabaseRouter {
     domain: DomainPartition,
     operation: (driver: IDatabaseDriver) => Promise<T>
   ): Promise<T> {
-    const primaryDriver = this.getDriverForDomain(domain);
+    const routeName = this.getRouteName(domain);
+    const primaryDriver = this.getActiveDriver(routeName);
 
+    if (domain === "commerce" && process.env.NODE_ENV === "production") {
+      if (!(primaryDriver instanceof MongoDatabaseDriver)) throw new Error("Durable commerce database unavailable");
+      return operation(primaryDriver);
+    }
     try {
       const result = await operation(primaryDriver);
       // Reset failure counter on success
-      this.failureCounts.set(primaryDriver.name, 0);
+      if (!this.circuitBreakerTripped.get(routeName)) this.failureCounts.set(routeName, 0);
       return result;
     } catch (err: unknown) {
       // Client/Schema constraint violations (e.g. MongoDB E11000 duplicate key) are not driver outages.
@@ -206,11 +206,11 @@ export class DatabaseRouter {
         throw err;
       }
 
-      const failures = (this.failureCounts.get(primaryDriver.name) || 0) + 1;
-      this.failureCounts.set(primaryDriver.name, failures);
+      const failures = (this.failureCounts.get(routeName) || 0) + 1;
+      this.failureCounts.set(routeName, failures);
 
-      if (failures >= this.config.circuitBreakerThreshold) {
-        this.circuitBreakerTripped.set(primaryDriver.name, true);
+      if (this.config.fallbackToMemory && failures >= this.config.circuitBreakerThreshold) {
+        this.circuitBreakerTripped.set(routeName, true);
         console.warn(
           `[DatabaseRouter] [CIRCUIT BREAKER TRIPPED] Driver '${primaryDriver.name}' reached ${failures} consecutive failures. Failing over to Memory Driver.`
         );
@@ -232,6 +232,17 @@ export class DatabaseRouter {
   // ==========================================
   // Universal Routed Operations
   // ==========================================
+
+  private memoryTransaction: Promise<unknown> = Promise.resolve();
+
+  public async commerceTransaction<T>(operation: () => Promise<T>): Promise<T> {
+    const driver = this.getDriverForDomain("commerce");
+    if (driver instanceof MongoDatabaseDriver) return driver.transaction(operation);
+    if (process.env.NODE_ENV === "production") throw new Error("Durable commerce database unavailable");
+    const result = this.memoryTransaction.then(operation);
+    this.memoryTransaction = result.catch(() => undefined);
+    return result;
+  }
 
   public async get<T>(collection: string, id: string, domain: DomainPartition = "default"): Promise<T | null> {
     return this.executeWithFailover(domain, async (driver) => {
@@ -263,7 +274,7 @@ export class DatabaseRouter {
       await driver.upsert(collection, storageRecord as unknown as T);
 
       // Mirror to fallback store to keep state sync if failover occurs
-      if (driver !== this.fallbackDriver) {
+      if (driver !== this.fallbackDriver && process.env.NODE_ENV !== "production") {
         await this.fallbackDriver.upsert(collection, record);
       }
     });
@@ -277,7 +288,7 @@ export class DatabaseRouter {
   ): Promise<void> {
     return this.executeWithFailover(domain, async (driver) => {
       await driver.update(collection, id, partial);
-      if (driver !== this.fallbackDriver) {
+      if (driver !== this.fallbackDriver && process.env.NODE_ENV !== "production") {
         await this.fallbackDriver.update(collection, id, partial);
       }
     });
@@ -286,7 +297,7 @@ export class DatabaseRouter {
   public async delete(collection: string, id: string, domain: DomainPartition = "default"): Promise<boolean> {
     return this.executeWithFailover(domain, async (driver) => {
       const res = await driver.delete(collection, id);
-      if (driver !== this.fallbackDriver) {
+      if (driver !== this.fallbackDriver && process.env.NODE_ENV !== "production") {
         await this.fallbackDriver.delete(collection, id);
       }
       return res;

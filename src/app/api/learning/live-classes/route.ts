@@ -1,3 +1,4 @@
+import { requireStudentAccess } from "@/lib/student-access";
 import { NextRequest, NextResponse } from "next/server";
 import { LIVE_SESSIONS, PAST_RECORDINGS, type LiveClassSession } from "@/data/live-classes";
 import { dbManager } from "@/../backend/database/client";
@@ -5,6 +6,8 @@ import { dbManager } from "@/../backend/database/client";
 export async function GET(req: NextRequest) {
   try {
     const studentId = req.nextUrl.searchParams.get("studentId");
+    const denied = await requireStudentAccess(req, studentId);
+    if (denied) return denied;
 
     if (!studentId) {
       return NextResponse.json({

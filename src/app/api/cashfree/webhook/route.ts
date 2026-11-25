@@ -1,9 +1,7 @@
+import { dbRouter } from "@/../backend/database/router/db-router";
 import { NextResponse } from "next/server";
 import { cashfreeClient } from "../../../../../backend/payments/cashfree";
 import { dbManager } from "../../../../../backend/database/client";
-import { defaultDispatcher } from "../../../../../backend/notifications/dispatcher";
-import { emailTemplates } from "../../../../../backend/templates/email-templates";
-import { whatsappTemplates } from "../../../../../backend/templates/whatsapp-templates";
 
 export const runtime = "nodejs";
 
@@ -35,7 +33,7 @@ export async function POST(request: Request) {
   }
 
   // Handle Cashfree dashboard setup test ping gracefully
-  if (!signature && (!rawBody || rawBody === "{}" || rawBody.toLowerCase().includes("test"))) {
+  if (!signature && (!rawBody || rawBody === "{}" || rawBody === JSON.stringify({ test: true }))) {
     return NextResponse.json({ status: "ok", message: "Cashfree test ping acknowledged" });
   }
 
@@ -92,14 +90,65 @@ export async function POST(request: Request) {
 
   // Support both Cashfree v2023-08-01 nested structure and legacy payload formats
   const eventType: string = payload?.type || payload?.event || "";
+  const refundData = payload?.data?.refund || payload?.refund || null;
+
+  // Handle Cashfree Refund Status Webhooks (REFUND_STATUS_WEBHOOK)
+  if (eventType === "REFUND_STATUS_WEBHOOK" || refundData) {
+    const merchantRefundId: string = String(refundData?.refund_id || payload?.refundId || "").trim();
+    const cfRefundId: string = String(refundData?.cf_refund_id || "").trim();
+    const rawRefundStatus: string = String(refundData?.refund_status || "").toUpperCase();
+
+    console.info(
+      `[Cashfree Webhook] Refund event '${eventType}' received for Refund '${merchantRefundId || cfRefundId}' (Status: ${rawRefundStatus})`
+    );
+
+    if (!merchantRefundId && !cfRefundId) {
+      return NextResponse.json({ error: "Missing refund_id in refund webhook data" }, { status: 422 });
+    }
+
+    const existingRefund =
+      (merchantRefundId ? await dbManager.commerce.getRefundById(merchantRefundId) : null) ||
+      (cfRefundId ? await dbManager.commerce.getRefundByGatewayId(cfRefundId) : null);
+
+    if (!existingRefund) {
+      return NextResponse.json({ error: "Unknown refund" }, { status: 404 });
+    }
+
+    const mappedStatus =
+      rawRefundStatus === "SUCCESS"
+        ? "COMPLETED"
+        : rawRefundStatus === "CANCELLED" || rawRefundStatus === "FAILED"
+        ? "FAILED"
+        : "PROCESSING";
+
+    try {
+      const updated = await dbRouter.commerceTransaction(async () => {
+        return await dbManager.commerce.applyRefundLifecycleStatus({
+          refundId: existingRefund.id,
+          status: mappedStatus,
+          gatewayRefundId: cfRefundId || existingRefund.gatewayRefundId,
+        });
+      });
+
+      return NextResponse.json({
+        status: "success",
+        event: "REFUND_STATUS_UPDATED",
+        refundId: existingRefund.id,
+        refundStatus: updated?.status || mappedStatus,
+      });
+    } catch {
+      return NextResponse.json({ error: "Refund status update pending" }, { status: 503 });
+    }
+  }
+
   const orderData = payload?.data?.order || payload?.order || {};
   const paymentData = payload?.data?.payment || payload?.payment || {};
 
   const orderId: string = orderData?.order_id || payload?.orderId || "";
   const paymentStatus: string = paymentData?.payment_status || orderData?.order_status || "";
-  const paymentId: string = String(paymentData?.cf_payment_id || `cf_pay_${Date.now()}`);
+  const paymentId: string = String(paymentData?.cf_payment_id || "");
   const amountPaidInPaise: number = Math.round(
-    (paymentData?.payment_amount || orderData?.order_amount || 4999) * 100
+    Number(paymentData?.payment_amount) * 100
   );
 
   console.info(
@@ -111,132 +160,26 @@ export async function POST(request: Request) {
   }
 
   // Check order in dynamic database
-  const order = await dbManager.commerce.getOrderById(orderId);
-  const enrollment = order ? await dbManager.commerce.getEnrollmentById(order.enrollmentId) : null;
-  const user = order ? await dbManager.commerce.getUserById(order.userId) : null;
-  const student = enrollment ? await dbManager.commerce.getStudentById(enrollment.studentId) : null;
-
-  // 2. Handle Payment Success
-  if (
-    eventType === "PAYMENT_SUCCESS_WEBHOOK" ||
-    paymentStatus === "SUCCESS" ||
-    paymentStatus === "PAID"
-  ) {
-    // Confirm order, record payment, activate enrollment, and initialize curriculum milestones & progress
-    const joined = await dbManager.commerce.confirmOrderAndEnrollment({
-      orderId,
-      gatewayOrderId: String(orderData?.cf_order_id || orderId),
-      paymentId,
-      paymentMethod: (paymentData?.payment_group as any) || "UPI",
-      amountInPaise: amountPaidInPaise,
-    });
-
-    const enrolledUser = joined.user;
-    const enrolledStudent = joined.student;
-    const enrolledEnrollment = joined.enrollment;
-    const enrolledBatch = joined.batch;
-    const enrolledCourse = joined.course;
-
-    // Dispatch Confirmation Notifications
-    if (enrolledUser && enrolledStudent && enrolledEnrollment) {
-      const school = await dbManager.schools.findByUid(enrolledEnrollment.schoolUid);
-      const tutor = enrolledBatch ? await dbManager.schools.getTutor(enrolledBatch.tutorId) : null;
-
-      const email = emailTemplates.enrolmentSuccess({
-        parentName: enrolledUser.username || "Parent",
-        studentName: enrolledStudent.fullName,
-        currentGrade: enrolledStudent.currentGrade,
-        schoolName: school?.officialName || enrolledEnrollment.schoolUid,
-        batchSchedule: enrolledBatch ? `${enrolledBatch.dayOfWeek}s ${enrolledBatch.startTime}` : "Weekly Lab Sessions",
-        tutorName: tutor?.fullName || "Lead AI Mentor",
-        amountPaid: `₹${(amountPaidInPaise / 100).toLocaleString("en-IN")}`,
-        orderId,
-      });
-
-      const wa = whatsappTemplates.enrolmentConfirmed({
-        parentPhone: enrolledUser.phone || "",
-        parentName: enrolledUser.username || "Parent",
-        studentName: enrolledStudent.fullName,
-        schoolName: school?.officialName || enrolledEnrollment.schoolUid,
-        grade: enrolledStudent.currentGrade,
-        orderId,
-        amountPaid: `₹${(amountPaidInPaise / 100).toLocaleString("en-IN")}`,
-        startDate: enrolledBatch ? `${enrolledBatch.dayOfWeek}s ${enrolledBatch.startTime}` : "Next Session",
-      });
-
-      // Dispatch Email via SMTP / Graph
-      await defaultDispatcher.sendEmail({
-        to: enrolledUser.email,
-        subject: email.subject,
-        html: email.html,
-        text: email.text,
-        metadata: { orderId, eventType, gateway: "CASHFREE", courseId: enrolledCourse?.id },
-      });
-
-      // Dispatch WhatsApp if user has a registered phone number
-      if (enrolledUser.phone) {
-        await defaultDispatcher.sendWhatsApp({
-          to: enrolledUser.phone,
-          templateName: wa.templateName,
-          fallbackText: wa.fallbackText,
-          components: wa.components,
-          metadata: { orderId, eventType, gateway: "CASHFREE", courseId: enrolledCourse?.id },
-        });
-      }
-
-      await dbManager.commerce.markAlertSent("ENROLMENT", orderId);
-    }
-
-    return NextResponse.json({
-      status: "success",
-      event: "PAYMENT_CONFIRMED",
-      orderId,
-      studentId: enrolledStudent?.id,
-      courseId: enrolledCourse?.id,
-      processedAt: new Date().toISOString(),
-    });
+  const order = await dbManager.commerce.getOrderById(orderId).catch(() => undefined);
+  if (order === undefined) return NextResponse.json({ error: "Database unavailable" }, { status: 503 });
+  if (!order) return NextResponse.json({ error: "Unknown order" }, { status: 404 });
+  if (paymentStatus !== "SUCCESS") return NextResponse.json({ status: "acknowledged" });
+  if (eventType !== "PAYMENT_SUCCESS_WEBHOOK" || !paymentId || amountPaidInPaise !== order.amountInPaise || paymentData.payment_currency !== "INR" || (orderData.order_currency && orderData.order_currency !== "INR")) {
+    return NextResponse.json({ error: "Payment does not match order" }, { status: 422 });
   }
-
-  // 3. Handle Payment Failure
-  if (
-    eventType === "PAYMENT_FAILED_WEBHOOK" ||
-    paymentStatus === "FAILED" ||
-    paymentStatus === "USER_DROPPED"
-  ) {
-    const failureReason = paymentData?.payment_message || "Transaction declined by issuing bank/UPI";
-    await dbManager.commerce.updateOrderStatus(orderId, "FAILED", failureReason);
-
-    if (user && student && order) {
-      const email = emailTemplates.paymentFailure({
-        parentName: user.username || "Parent",
-        studentName: student.fullName,
-        amount: `₹${(order.amountInPaise / 100).toLocaleString("en-IN")}`,
-        failureReason,
-        retryUrl: order.checkoutUrl,
+  try {
+    await dbRouter.commerceTransaction(async () => {
+      const current = await dbManager.commerce.getOrderById(orderId);
+      if (!current) throw new Error("Order unavailable");
+      if (current.status === "PAID") return;
+      await dbManager.commerce.confirmOrderAndEnrollment({
+        orderId, paymentId, amountInPaise: amountPaidInPaise,
+        gatewayOrderId: String(orderData.cf_order_id || orderId),
+        paymentMethod: paymentData.payment_group,
       });
-
-      await defaultDispatcher.sendEmail({
-        to: user.email,
-        subject: email.subject,
-        html: email.html,
-        text: email.text,
-        metadata: { orderId, failureReason, gateway: "CASHFREE" },
-      });
-
-      await dbManager.commerce.markAlertSent("PAYMENT_FAILURE", orderId);
-    }
-
-    return NextResponse.json({
-      status: "acknowledged",
-      event: "PAYMENT_FAILED",
-      orderId,
-      failureReason,
     });
+  } catch {
+    return NextResponse.json({ error: "Payment confirmation pending" }, { status: 503 });
   }
-
-  return NextResponse.json({
-    status: "acknowledged",
-    event: eventType,
-    orderId,
-  });
+  return NextResponse.json({ status: "success", event: "PAYMENT_CONFIRMED", orderId });
 }

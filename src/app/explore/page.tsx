@@ -283,18 +283,7 @@ export default function ExplorePage() {
         {/* Grid of Course Cards (matching Image 2) */}
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredCourses.map((course, idx) => {
-            let isEnrolled = false;
-            if (typeof window !== "undefined") {
-              try {
-                const stored = JSON.parse(localStorage.getItem("thinkova_enrolled_courses") || "[]");
-                if (stored.includes(course.id)) isEnrolled = true;
-              } catch {
-                // Ignore
-              }
-            }
-            if (activeStudent?.activeEnrollment && activeStudent.preferredTrack === course.trackId) {
-              isEnrolled = true;
-            }
+            const isEnrolled = activeStudent?.activeEnrollment?.status === "ENROLLED" && activeStudent.activeEnrollment.courseId === course.id;
             const isPopular = course.id === "robotics-starter";
 
             return (

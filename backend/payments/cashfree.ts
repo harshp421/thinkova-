@@ -40,6 +40,26 @@ export interface CashfreeGetOrderResult {
   raw?: any;
 }
 
+export interface CashfreeCreateRefundInput {
+  orderId: string;
+  refundId: string;
+  refundAmount: number; // in INR
+  refundNote?: string;
+  refundSpeed?: "STANDARD" | "INSTANT";
+}
+
+export interface CashfreeRefundResult {
+  orderId: string;
+  refundId: string;
+  cfRefundId: string;
+  refundAmount: number;
+  refundCurrency: string;
+  refundStatus: "SUCCESS" | "PENDING" | "CANCELLED" | "ONHOLD" | "FAILED";
+  environment: "SANDBOX" | "PRODUCTION";
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  raw?: any;
+}
+
 export class CashfreeClient {
   /**
    * Checks whether live credentials have been added to environment
@@ -98,32 +118,14 @@ export class CashfreeClient {
       );
     }
 
+    const site = new URL(process.env.CASHFREE_SITE_URL || process.env.NEXT_PUBLIC_SITE_URL || "http://localhost");
     const isProd = (process.env.CASHFREE_ENV || "").toUpperCase() === "PRODUCTION";
-    const prodDomain = "https://www.thinkova.ai";
-
-    let returnUrl = input.returnUrl || `${prodDomain}/confirmation?order_id={order_id}`;
-
-    // Cashfree PG Orders API strictly mandates a valid public https:// URL.
-    // Automatically sanitize and route any local, loopback, non-SSL IP, or http:// URLs via deployed production domain.
-    if (
-      !returnUrl.startsWith("https://") ||
-      returnUrl.includes("localhost") ||
-      returnUrl.includes("127.0.0.1") ||
-      returnUrl.includes("172.169.233.17")
-    ) {
-      const query = returnUrl.includes("?") ? returnUrl.slice(returnUrl.indexOf("?")) : "?order_id={order_id}";
-      returnUrl = `${prodDomain}/confirmation${query}`;
+    if (site.protocol !== "https:" || (!isProd && ["thinkova.ai", "www.thinkova.ai"].includes(site.hostname))) {
+      throw new Error("Configure CASHFREE_SITE_URL for the active payment environment.");
     }
-
-    let notifyUrl = input.notifyUrl || `${prodDomain}/api/cashfree/webhook`;
-    if (
-      !notifyUrl.startsWith("https://") ||
-      notifyUrl.includes("localhost") ||
-      notifyUrl.includes("127.0.0.1") ||
-      notifyUrl.includes("172.169.233.17")
-    ) {
-      notifyUrl = `${prodDomain}/api/cashfree/webhook`;
-    }
+    const query = input.returnUrl ? new URL(input.returnUrl, site).search : "?order_id={order_id}";
+    const returnUrl = site.origin + "/confirmation" + query;
+    const notifyUrl = site.origin + "/api/cashfree/webhook";
 
     // Clean customer phone strictly to valid 10-digit Indian domestic mobile number
     const rawDigits = (input.customer.customerPhone || "").replace(/\D/g, "");
@@ -234,6 +236,109 @@ export class CashfreeClient {
       orderAmount: data.order_amount,
       orderCurrency: data.order_currency,
       isSimulation: false,
+      raw: data,
+    };
+  }
+
+  /**
+   * Initiates a refund with Cashfree PG Orders Refunds API v2023-08-01
+   */
+  public async createRefund(input: CashfreeCreateRefundInput): Promise<CashfreeRefundResult> {
+    if (!this.isConfigured()) {
+      throw new Error(
+        "Cashfree payment gateway credentials are not configured on the server."
+      );
+    }
+
+    const isProd = (process.env.CASHFREE_ENV || "").toUpperCase() === "PRODUCTION";
+    const url = `${this.getBaseUrl()}/orders/${encodeURIComponent(input.orderId)}/refunds`;
+    const payload = {
+      refund_amount: Number(input.refundAmount.toFixed(2)),
+      refund_id: input.refundId,
+      refund_note: (input.refundNote || "ThinkOva Refund").slice(0, 100),
+      refund_speed: input.refundSpeed || "STANDARD",
+    };
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "x-api-version": this.getApiVersion(),
+        "x-client-id": process.env.CASHFREE_APP_ID || "",
+        "x-client-secret": process.env.CASHFREE_SECRET_KEY || "",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error(`[Cashfree] Failed to create refund (${res.status}): ${errText}`);
+      throw new Error(`Cashfree Refund Creation Failed (${res.status}): ${errText}`);
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = (await res.json()) as any;
+    const rawStatus = String(data.refund_status || "PENDING").toUpperCase();
+    const refundStatus = (
+      ["SUCCESS", "PENDING", "CANCELLED", "ONHOLD", "FAILED"].includes(rawStatus)
+        ? rawStatus
+        : "PENDING"
+    ) as CashfreeRefundResult["refundStatus"];
+
+    return {
+      orderId: data.order_id || input.orderId,
+      refundId: data.refund_id || input.refundId,
+      cfRefundId: String(data.cf_refund_id || data.refund_id || input.refundId),
+      refundAmount: Number(data.refund_amount ?? input.refundAmount),
+      refundCurrency: data.refund_currency || "INR",
+      refundStatus,
+      environment: isProd ? "PRODUCTION" : "SANDBOX",
+      raw: data,
+    };
+  }
+
+  /**
+   * Retrieves refund status from Cashfree PG API
+   */
+  public async getRefund(orderId: string, refundId: string): Promise<CashfreeRefundResult> {
+    if (!this.isConfigured()) {
+      throw new Error(
+        "Cashfree payment gateway credentials are not configured on the server."
+      );
+    }
+
+    const isProd = (process.env.CASHFREE_ENV || "").toUpperCase() === "PRODUCTION";
+    const url = `${this.getBaseUrl()}/orders/${encodeURIComponent(orderId)}/refunds/${encodeURIComponent(refundId)}`;
+    const res = await fetch(url, {
+      headers: {
+        "x-api-version": this.getApiVersion(),
+        "x-client-id": process.env.CASHFREE_APP_ID || "",
+        "x-client-secret": process.env.CASHFREE_SECRET_KEY || "",
+      },
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Cashfree Get Refund Failed (${res.status}): ${errText}`);
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = (await res.json()) as any;
+    const rawStatus = String(data.refund_status || "PENDING").toUpperCase();
+    const refundStatus = (
+      ["SUCCESS", "PENDING", "CANCELLED", "ONHOLD", "FAILED"].includes(rawStatus)
+        ? rawStatus
+        : "PENDING"
+    ) as CashfreeRefundResult["refundStatus"];
+
+    return {
+      orderId: data.order_id || orderId,
+      refundId: data.refund_id || refundId,
+      cfRefundId: String(data.cf_refund_id || data.refund_id || refundId),
+      refundAmount: Number(data.refund_amount ?? 0),
+      refundCurrency: data.refund_currency || "INR",
+      refundStatus,
+      environment: isProd ? "PRODUCTION" : "SANDBOX",
       raw: data,
     };
   }

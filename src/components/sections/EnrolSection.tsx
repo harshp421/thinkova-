@@ -1,5 +1,7 @@
 "use client";
 
+import { formatEnrollmentAmount } from "@/lib/enrollment-pricing";
+import { useEnrollmentPricing } from "@/lib/use-enrollment-pricing";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Check, ChevronDown, Loader2, Sparkles, UserCheck } from "lucide-react";
@@ -8,7 +10,6 @@ import { siteConfig } from "@/data/site";
 import { allCourses, tracksData } from "@/data/tracks";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
-import { EnrolSuccessView } from "./EnrolSuccessView";
 
 export function EnrolSection() {
   const { user, activeStudent, isLoading } = useAuth();
@@ -29,8 +30,6 @@ export function EnrolSection() {
 
   const [enrolSubmitting, setEnrolSubmitting] = useState(false);
   const [enrolError, setEnrolError] = useState("");
-  const [enrolSuccess, setEnrolSuccess] = useState(false);
-  const [orderRef, setOrderRef] = useState("");
 
   // Read URL query parameters on mount to pre-fill student and track selection
   useEffect(() => {
@@ -67,6 +66,9 @@ export function EnrolSection() {
         }
       }
     }
+    const requestedCourse = allCourses.find(course => course.id === params.get("courseId"));
+    if (requestedCourse) setSelectedCourseTitle(requestedCourse.title);
+    if (params.get("enrolPlan") === "installments") setPayPlan("installments");
     if (paramParentName) setParentName(paramParentName);
     if (paramEmail) setEmail(paramEmail);
     if (paramPhone) setMobile(paramPhone.replace(/\D/g, ""));
@@ -85,7 +87,7 @@ export function EnrolSection() {
       if (activeStudent.currentGrade) {
         setGrade(`Grade ${activeStudent.currentGrade}`);
       }
-      if (activeStudent.preferredTrack) {
+      if (activeStudent.preferredTrack && !new URLSearchParams(window.location.search).has("courseId")) {
         const trackMatch = tracksData.find(
           (t) => t.id.toLowerCase() === activeStudent.preferredTrack?.toLowerCase()
         );
@@ -104,18 +106,20 @@ export function EnrolSection() {
 
   const activeCourse =
     allCourses.find((c) => c.title === selectedCourseTitle) ?? allCourses[0]!;
-  const basePrice = activeCourse ? activeCourse.price : 5499;
-  const currentAmount =
-    payPlan === "full" ? basePrice : Math.round(basePrice / 2) + 250;
+  const { pricing, unavailable, refresh } = useEnrollmentPricing(activeCourse.id);
+  const currentAmount = pricing && (payPlan === "full" ? pricing.full : pricing.first);
 
   const handleEnrolSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setEnrolError("");
+    if (isLoading || !currentAmount) return;
 
     if (!user) {
       setEnrolError("Please sign up or log in before enrolling your child.");
       if (typeof window !== "undefined") {
-        window.location.href = `/signup?redirectTo=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+        const selection = new URLSearchParams({ courseId: activeCourse.id, enrolPlan: payPlan });
+        const destination = `${window.location.pathname}?${selection}#enrol-title`;
+        window.location.href = `/signup?redirectTo=${encodeURIComponent(destination)}`;
       }
       return;
     }
@@ -151,7 +155,7 @@ export function EnrolSection() {
           parentPhone: cleanPhone,
           schoolUid: schoolCode.trim().toUpperCase() || "PUNE-SAMPLE",
           grade: parseInt(grade.replace(/\D/g, "") || "6", 10),
-          courseTitle: selectedCourseTitle,
+          courseId: activeCourse.id,
           paymentPlan: payPlan === "full" ? "FULL" : "INSTALLMENTS",
           amountInRupees: currentAmount,
         }),
@@ -159,11 +163,11 @@ export function EnrolSection() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
+        if (data.code === "PRICE_TAMPERING_DETECTED") refresh();
         throw new Error(data.message || data.error || "Failed to create order.");
       }
 
       const result = await res.json();
-      setOrderRef(result.orderId || `THK-${Date.now().toString().slice(-6)}`);
 
       if (result.paymentSessionId) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -209,7 +213,7 @@ export function EnrolSection() {
           throw sdkErr;
         }
       } else {
-        setEnrolSuccess(true);
+        throw new Error("Cashfree did not return a payment session. Please try again.");
       }
     } catch (err) {
       setEnrolError((err as Error).message || "An unexpected error occurred. Please try again.");
@@ -295,17 +299,7 @@ export function EnrolSection() {
           {/* Right Parent Registration Form (Cols 6-12) */}
           <div className="col-span-1 lg:col-span-7">
             <div className="rounded-3xl border border-[#E3E1D9] bg-white p-6 shadow-xl sm:p-10">
-              {enrolSuccess ? (
-                <EnrolSuccessView
-                  childName={childName}
-                  payPlan={payPlan === "full" ? "full" : "parts"}
-                  email={email}
-                  schoolCode={schoolCode}
-                  orderRef={orderRef}
-                  onEdit={() => setEnrolSuccess(false)}
-                />
-              ) : (
-                <form onSubmit={handleEnrolSubmit} className="space-y-6">
+              <form onSubmit={handleEnrolSubmit} className="space-y-6">
                   <div>
                     <h3 className="text-2xl font-semibold text-[#0B0C0F]">Parent enrolment</h3>
                     <p className="mt-1 text-xs text-[#5A5F6B]">
@@ -319,7 +313,7 @@ export function EnrolSection() {
                         <strong>Sign up or log in is required to enrol</strong> so your child&apos;s progress and kit are securely tracked in your parent portal.
                       </span>
                       <a
-                        href="/signup?redirectTo=/enrol"
+                        href="/signup?redirectTo=%2F%23enrol-title"
                         className="shrink-0 rounded-lg bg-[#FF6B2C] px-3 py-1.5 font-semibold text-white transition hover:bg-[#E05316]"
                       >
                         Sign Up
@@ -512,7 +506,7 @@ export function EnrolSection() {
                           </span>
                         </div>
                         <div className="mt-2 text-[22px] font-bold text-[#0B0C0F] leading-none">
-                          ₹{basePrice.toLocaleString("en-IN")}
+                          {pricing ? formatEnrollmentAmount(pricing.full) : "—"}
                         </div>
                         <p className="mt-1 text-xs text-[#5A5F6B]">One payment today</p>
                       </div>
@@ -530,7 +524,7 @@ export function EnrolSection() {
                           <span className="text-[13px] font-bold text-[#0B0C0F]">Two parts</span>
                         </div>
                         <div className="mt-2 text-[22px] font-bold text-[#0B0C0F] leading-none">
-                          ₹{(Math.round(basePrice / 2) + 250).toLocaleString("en-IN")} now
+                          {pricing ? formatEnrollmentAmount(pricing.first) : "—"} now
                         </div>
                         <p className="mt-1 text-xs text-[#5A5F6B]">Second part by week 4</p>
                       </div>
@@ -559,10 +553,11 @@ export function EnrolSection() {
                     </label>
                   </div>
 
+                  {unavailable && <button type="button" onClick={refresh}>Retry loading price</button>}
                   {/* Submit Button */}
                   <button
                     type="submit"
-                    disabled={enrolSubmitting}
+                    disabled={enrolSubmitting || !currentAmount || isLoading}
                     className="w-full rounded-2xl bg-gradient-to-r from-[#FF6B2C] to-[#E05316] py-4 text-center text-sm font-semibold text-white shadow-xl transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50"
                   >
                     {enrolSubmitting ? (
@@ -571,11 +566,10 @@ export function EnrolSection() {
                         Setting up payment...
                       </span>
                     ) : (
-                      `Pay ₹${currentAmount.toLocaleString("en-IN")} & confirm place →`
+                      currentAmount ? `Pay ${formatEnrollmentAmount(currentAmount)} & confirm place →` : "Loading price…"
                     )}
                   </button>
                 </form>
-              )}
             </div>
           </div>
         </div>

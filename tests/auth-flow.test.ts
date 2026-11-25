@@ -1,3 +1,5 @@
+import { createTestSession } from "./fixtures";
+import { POST as logout } from "../src/app/api/auth/logout/route";
 import { describe, it, expect, beforeEach } from "vitest";
 import { dbManager } from "../backend/database/client";
 import { createSessionToken, verifySessionToken } from "../src/lib/auth-session";
@@ -19,7 +21,7 @@ describe("Parent Auth & Student Profiles Flow", () => {
       role: "PARENT" as const,
     };
 
-    const token = await createSessionToken(payload);
+    const token = await createTestSession(payload);
     expect(token).toBeDefined();
     expect(typeof token).toBe("string");
     expect(token.split(".").length).toBe(3);
@@ -29,6 +31,13 @@ describe("Parent Auth & Student Profiles Flow", () => {
     expect(verified?.userId).toBe("usr_test_123");
     expect(verified?.email).toBe("parent@example.com");
     expect(verified?.fullName).toBe("Anita Desai");
+  });
+
+  it("revokes the server session on logout", async () => {
+    const token = await createTestSession({ userId: "logout-parent", email: "logout@example.test", username: "parent", fullName: "Parent", role: "PARENT" });
+    const response = await logout(new Request("https://example.test/api/auth/logout", { method: "POST", headers: { authorization: "Bearer " + token } }));
+    expect(response.status).toBe(200);
+    expect(await verifySessionToken(token)).toBeNull();
   });
 
   it("2. Persists parent signup and triggers welcome notification", async () => {

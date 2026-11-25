@@ -1,22 +1,20 @@
+import { requireStudentAccess } from "@/lib/student-access";
 import { NextRequest, NextResponse } from "next/server";
 import { dbManager } from "@/../backend/database/client";
 
 export async function GET(req: NextRequest) {
   try {
-    const courseId = req.nextUrl.searchParams.get("courseId") || "robotics-starter";
+    const requestedCourse = req.nextUrl.searchParams.get("courseId");
     const weekNumber = Number(req.nextUrl.searchParams.get("weekNumber") || 1);
     const studentId = req.nextUrl.searchParams.get("studentId");
+    const denied = await requireStudentAccess(req, studentId);
+    if (denied) return denied;
 
-    let isEnrolled = false;
-    let studentProgress = null;
-
-    if (studentId) {
-      const enrollments = await dbManager.commerce.getEnrollmentsByStudentId(studentId);
-      isEnrolled = enrollments.some(
-        (e) => (e.courseId === courseId || !e.courseId) && e.status === "ENROLLED"
-      );
-      studentProgress = await dbManager.commerce.getCourseProgressByStudent(studentId, courseId);
-    }
+    const enrollments = await dbManager.commerce.getEnrollmentsByStudentId(studentId!);
+    const enrolled = enrollments.find(e => e.status === "ENROLLED" && (!requestedCourse || e.courseId === requestedCourse));
+    if (!enrolled?.courseId) return NextResponse.json({ error: "Enrollment required" }, { status: 403 });
+    const courseId = enrolled.courseId;
+    const studentProgress = await dbManager.commerce.getCourseProgressByStudent(studentId!, courseId);
 
     // Dynamic fetch from thinkova_schools.course_videos & shared curriculum
     const [video, shared] = await Promise.all([
@@ -30,7 +28,7 @@ export async function GET(req: NextRequest) {
       success: true,
       courseId,
       weekNumber,
-      isEnrolled,
+      isEnrolled: true,
       courseTitle: shared.course?.title || "ThinkOva Lab Studio",
       hasUploadedVideo,
       video: hasUploadedVideo ? video : null,

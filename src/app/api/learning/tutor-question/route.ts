@@ -1,3 +1,6 @@
+import { getSessionFromRequest } from "@/lib/auth-session";
+import { tutorAssigned } from "@/lib/student-access";
+import { requireStudentAccess } from "@/lib/student-access";
 import { NextRequest, NextResponse } from "next/server";
 import { dbManager } from "@/../backend/database/client";
 
@@ -25,6 +28,18 @@ export async function GET(req: NextRequest) {
   try {
     const isAll = req.nextUrl.searchParams.get("all") === "true";
     const studentId = req.nextUrl.searchParams.get("studentId");
+    const session = await getSessionFromRequest(req);
+    if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    if (isAll) {
+      if (session.role !== "TUTOR" && session.role !== "SUPER_ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      const questions = [];
+      for (const q of tutorQuestionsStore) {
+        if (session.role === "SUPER_ADMIN" || await tutorAssigned(q.studentId, session.email)) questions.push(q);
+      }
+      return NextResponse.json({ success: true, questions });
+    }
+    const denied = await requireStudentAccess(req, studentId);
+    if (denied) return denied;
     const courseId = req.nextUrl.searchParams.get("courseId");
 
     // Fetch tutor info dynamically from student's enrolled course / batch
@@ -97,7 +112,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Question not found" }, { status: 404 });
       }
 
-      const tutorName = String(body.tutorName || "Tutor").trim();
+      const session = await getSessionFromRequest(req);
+      if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+      if (session.role !== "SUPER_ADMIN" && !(session.role === "TUTOR" && await tutorAssigned(q.studentId, session.email))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      const tutorName = session.fullName;
       const tutorRole = String(body.tutorRole || "Lab Mentor").trim();
       const message = String(body.message || "").trim();
 
@@ -121,6 +139,8 @@ export async function POST(req: NextRequest) {
     }
 
     const studentId = String(body.studentId || "").trim();
+    const denied = await requireStudentAccess(req, studentId);
+    if (denied) return denied;
     if (!studentId) {
       return NextResponse.json(
         { error: "Missing required studentId parameter." },

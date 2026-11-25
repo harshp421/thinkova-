@@ -1,3 +1,5 @@
+import { getSessionFromRequest } from "@/lib/auth-session";
+import { requireStudentAccess } from "@/lib/student-access";
 import { NextRequest, NextResponse } from "next/server";
 import { dbManager } from "@/../backend/database/client";
 
@@ -92,6 +94,7 @@ const level6QuizQuestions: QuizQuestion[] = [
 ];
 
 export async function GET(req: NextRequest) {
+  if (!await getSessionFromRequest(req)) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   const level = Number(req.nextUrl.searchParams.get("level") || 6);
 
   return NextResponse.json({
@@ -117,7 +120,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const studentId = String(body.studentId || "learner");
+    const studentId = String(body.studentId || "");
+    const denied = await requireStudentAccess(req, studentId);
+    if (denied) return denied;
     const userAnswers: Record<string, string> = body.answers || {}; // e.g. { q1: "B", q2: "B", ... }
 
     // Pedagogic Baseline Defaults: allows single-question test evaluation while matching Figma benchmark states

@@ -1,5 +1,7 @@
 "use client";
 
+import { formatEnrollmentAmount } from "@/lib/enrollment-pricing";
+import { useEnrollmentPricing } from "@/lib/use-enrollment-pricing";
 import { useState } from "react";
 import { Check } from "lucide-react";
 import { Container } from "@/components/ui/Container";
@@ -7,6 +9,8 @@ import { cn } from "@/lib/utils";
 
 export function PricingSection() {
   const [feePlan, setFeePlan] = useState<"full" | "installments">("full");
+
+  const { pricing } = useEnrollmentPricing("robotics-starter");
 
   const scrollToEnrol = () => {
     const el = document.getElementById("enrol");
@@ -41,7 +45,7 @@ export function PricingSection() {
 
             <div className="mt-4 flex items-baseline gap-3">
               <span className="font-display text-[48px] sm:text-[56px] font-normal text-white">
-                {feePlan === "full" ? "₹5,499" : "₹5,999"}
+                {pricing ? formatEnrollmentAmount(feePlan === "full" ? pricing.full : pricing.total) : "—"}
               </span>
               <span className="text-xs sm:text-sm text-white/60">for all 6 weeks, kit included</span>
             </div>
@@ -65,7 +69,7 @@ export function PricingSection() {
                   </span>
                 </div>
                 <div className="mt-3 text-[26px] font-bold tracking-tight text-white leading-none">
-                  ₹5,499
+                  {pricing ? formatEnrollmentAmount(pricing.full) : "—"}
                 </div>
                 <p className="mt-2 text-xs text-white/60 leading-normal">
                   One payment when you enrol
@@ -86,10 +90,10 @@ export function PricingSection() {
                   <span className="text-[13px] font-bold text-white">Two parts</span>
                 </div>
                 <div className="mt-3 text-[26px] font-bold tracking-tight text-white leading-none">
-                  ₹5,999
+                  {pricing ? formatEnrollmentAmount(pricing.total) : "—"}
                 </div>
                 <p className="mt-2 text-xs text-white/60 leading-normal">
-                  ₹3,000 now, ₹2,999 by week 4
+                  {pricing ? `${formatEnrollmentAmount(pricing.first)} now, ${formatEnrollmentAmount(pricing.second)} by week 4` : "Price available at enrolment"}
                 </p>
               </div>
             </div>
@@ -124,7 +128,7 @@ export function PricingSection() {
             <div className="rounded-3xl border border-[#E3E1D9] bg-white p-8 shadow-sm">
               <div className="space-y-4">
                 {[
-                  { track: "Robotics", price: "₹5,499 – ₹6,999" },
+                  { track: "Robotics", price: pricing ? `${formatEnrollmentAmount(pricing.full)} – ₹6,999` : "See enrolment" },
                   { track: "Electronics & IoT", price: "₹4,999 – ₹6,499" },
                   { track: "AI & Agents", price: "₹4,499 – ₹5,499" },
                   { track: "Game Design", price: "₹3,999 – ₹4,999" },

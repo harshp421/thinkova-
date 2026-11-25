@@ -1,3 +1,4 @@
+import { dbRouter } from "@/../backend/database/router/db-router";
 import { NextRequest, NextResponse } from "next/server";
 import { dbManager } from "@/../backend/database/client";
 import { notificationDispatcher } from "@/../backend/notifications/dispatcher";
@@ -40,10 +41,13 @@ export async function POST(req: NextRequest) {
 
     // Update password hash and invalidate reset token
     user.passwordHash = hashPassword(password);
-    user.resetPasswordToken = undefined;
+    delete user.resetPasswordToken;
     user.resetPasswordExpires = undefined;
 
     await dbManager.commerce.upsertUser(user);
+    await dbRouter.update("users", user.id, { resetPasswordToken: null, resetPasswordExpires: null }, "commerce");
+    const sessions = await dbRouter.find<{ id: string }>("sessions", { userId: user.id }, undefined, "commerce");
+    await Promise.all(sessions.map(session => dbRouter.delete("sessions", session.id, "commerce")));
     console.log(`[Reset Password] Password successfully reset for user: ${user.id} (${user.email})`);
 
     // Dispatch confirmation notifications

@@ -1,3 +1,5 @@
+import { authenticateParent } from "./fixtures";
+import { dbManager } from "../backend/database/client";
 import { describe, it, expect } from "vitest";
 import { getStudentProgressData, CANONICAL_COURSES_PROGRESS } from "../src/data/progress-data";
 import { GET as getCertificates, POST as postCertificates } from "../src/app/api/learning/certificates/route";
@@ -44,6 +46,8 @@ describe("Progress & Certificates Engine and API", () => {
 
   it("2. GET /api/learning/certificates returns progress summary and certificate metadata", async () => {
     const req = new NextRequest("http://localhost:3000/api/learning/certificates?studentId=aarav&courseId=ai-for-young-creators&studentName=Aarav%20Sharma");
+    await authenticateParent(req);
+    await dbManager.commerce.upsertStudent({ id: "aarav", parentUserId: "fixture-parent", fullName: "Aarav Sharma", schoolUid: "TEST", currentGrade: 6, createdAt: new Date() });
     const res = await getCertificates(req);
     const data = await res.json();
 
@@ -69,6 +73,8 @@ describe("Progress & Certificates Engine and API", () => {
       }),
     });
 
+    await authenticateParent(req);
+    await dbManager.commerce.upsertStudent({ id: "aarav", parentUserId: "fixture-parent", fullName: "Aarav Sharma", schoolUid: "TEST", currentGrade: 6, createdAt: new Date() });
     const res = await postCertificates(req);
     const data = await res.json();
 
@@ -80,6 +86,8 @@ describe("Progress & Certificates Engine and API", () => {
 
   it("4. GET /api/learning/certificates/download generates an official SVG certificate", async () => {
     const req = new NextRequest("http://localhost:3000/api/learning/certificates/download?studentId=aarav&courseId=ai-for-young-creators&studentName=Aarav%20Sharma");
+    await authenticateParent(req);
+    await dbManager.commerce.upsertStudent({ id: "aarav", parentUserId: "fixture-parent", fullName: "Aarav Sharma", schoolUid: "TEST", currentGrade: 6, createdAt: new Date() });
     const res = await downloadCertificate(req);
 
     expect(res.status).toBe(200);

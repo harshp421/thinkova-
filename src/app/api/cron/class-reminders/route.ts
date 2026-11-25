@@ -194,6 +194,7 @@ export async function GET(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET?.trim();
   const internalKey = process.env.INTERNAL_API_KEY?.trim();
 
+  if (!cronSecret && !internalKey && process.env.NODE_ENV !== "test") return NextResponse.json({ error: "Scheduler unavailable" }, { status: 503 });
   if (cronSecret || internalKey) {
     if (process.env.NODE_ENV === "test" && !authHeader && !internalSecret) {
       // Allow unit test runner execution when no headers are supplied
@@ -227,6 +228,7 @@ export async function POST(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET?.trim();
   const internalKey = process.env.INTERNAL_API_KEY?.trim();
 
+  if (!cronSecret && !internalKey && process.env.NODE_ENV !== "test") return NextResponse.json({ error: "Scheduler unavailable" }, { status: 503 });
   if (cronSecret || internalKey) {
     if (process.env.NODE_ENV === "test" && !authHeader && !internalSecret) {
       // Allow unit test runner execution when no headers are supplied

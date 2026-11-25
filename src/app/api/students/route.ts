@@ -5,7 +5,7 @@ import { dbManager } from "@/../backend/database/client";
 export async function GET(req: NextRequest) {
   try {
     const session = await getSessionFromRequest(req);
-    const parentUserId = session?.userId || req.nextUrl.searchParams.get("parentUserId");
+    const parentUserId = session?.userId;
 
     if (!parentUserId) {
       return NextResponse.json({ error: "Unauthorized. Please log in." }, { status: 401 });
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     const session = await getSessionFromRequest(req);
     const body = await req.json();
 
-    const parentUserId = session?.userId || body.parentUserId;
+    const parentUserId = session?.userId;
     if (!parentUserId) {
       return NextResponse.json({ error: "Unauthorized. Please log in first." }, { status: 401 });
     }

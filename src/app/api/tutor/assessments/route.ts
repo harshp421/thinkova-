@@ -1,3 +1,4 @@
+import { getSessionFromRequest } from "@/lib/auth-session";
 import { NextRequest, NextResponse } from "next/server";
 import { dbManager } from "@/../backend/database/client";
 import { AssessmentEntity } from "@/../backend/database/types";
@@ -6,6 +7,9 @@ export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
   try {
+    const session = await getSessionFromRequest(req);
+    if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    if (!["TUTOR", "SUPER_ADMIN"].includes(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     const { searchParams } = req.nextUrl;
     const batchId = searchParams.get("batchId");
     const studentId = searchParams.get("studentId");
@@ -20,6 +24,11 @@ export async function GET(req: NextRequest) {
       assessments = (await dbManager.commerce.getUnsentAssessments()).map((r) => r.assessment);
     }
 
+    if (session.role === "TUTOR") {
+      const tutor = (await dbManager.schools.listAllTutors()).find(item => item.email.toLowerCase() === session.email.toLowerCase());
+      const allowed = new Set(tutor ? (await dbManager.schools.listBatchesByTutorId(tutor.id)).map(b => b.id) : []);
+      assessments = assessments.filter(item => allowed.has(item.cohortBatchId));
+    }
     return NextResponse.json({
       success: true,
       count: assessments.length,
@@ -33,6 +42,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const session = await getSessionFromRequest(req);
+    if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    if (!["TUTOR", "SUPER_ADMIN"].includes(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     const body = await req.json();
 
     const studentId = String(body.studentId || "").trim();
@@ -50,7 +62,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required studentId parameter." }, { status: 400 });
     }
 
-    const assessmentId = body.id || `asm_${studentId}_lvl${levelNumber}_${Date.now()}`;
+    if (session.role === "TUTOR") {
+      const batch = await dbManager.schools.getBatch(cohortBatchId);
+      const tutor = batch && await dbManager.schools.getTutor(batch.tutorId);
+      const roster = await dbManager.commerce.getEnrollmentsByBatchId(cohortBatchId);
+      if (tutor?.email.toLowerCase() !== session.email.toLowerCase() || !roster.some(e => e.studentId === studentId && e.status === "ENROLLED")) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    }
+    const assessmentId = `asm_${studentId}_lvl${levelNumber}_${Date.now()}`;
 
     const assessment: AssessmentEntity = {
       id: assessmentId,

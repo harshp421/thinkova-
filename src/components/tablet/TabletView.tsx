@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { formatEnrollmentAmount } from "@/lib/enrollment-pricing";
+import { useEnrollmentPricing } from "@/lib/use-enrollment-pricing";
+import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
@@ -183,7 +185,20 @@ export function TabletView() {
   const [parentName, setParentName] = useState("");
   const [parentEmail, setParentEmail] = useState("");
   const [mobileNum, setMobileNum] = useState("");
-  const [enrolSubmitted, setEnrolSubmitted] = useState(false);
+  const { user, isLoading: authLoading } = useAuth();
+  const { pricing, unavailable, refresh } = useEnrollmentPricing("robotics-starter");
+  const [enrolError, setEnrolError] = useState("");
+  useEffect(() => {
+    const plan = new URLSearchParams(window.location.search).get("enrolPlan");
+    if (plan === "full" || plan === "parts") {
+      setSelectedPlan(plan);
+      setIsEnrolFormOpen(true);
+    }
+  }, []);
+  const fullFee = pricing ? formatEnrollmentAmount(pricing.full) : "See checkout";
+  const firstFee = pricing ? formatEnrollmentAmount(pricing.first) : "See checkout";
+  const secondFee = pricing ? formatEnrollmentAmount(pricing.second) : "See checkout";
+  const totalFee = pricing ? formatEnrollmentAmount(pricing.total) : "See checkout";
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Field validation checks for tablet form
@@ -219,8 +234,15 @@ export function TabletView() {
     e.preventDefault();
     if (!isTabletFormValid || isSubmitting) return;
 
+    if (authLoading || !pricing) return;
+    if (!user) {
+      const destination = window.location.pathname + "?enrolPlan=" + selectedPlan + "#tablet-enrol";
+      window.location.assign(`/signup?redirectTo=${encodeURIComponent(destination)}`);
+      return;
+    }
+    setEnrolError("");
     setIsSubmitting(true);
-    const amountInRupees = selectedPlan === "full" ? 4499 : 2500;
+    const amountInRupees = selectedPlan === "full" ? pricing.full : pricing.first;
 
     try {
       const res = await fetch("/api/cashfree/order", {
@@ -234,60 +256,62 @@ export function TabletView() {
           schoolUid: schoolCode.trim().toUpperCase(),
           grade: parseInt(childGrade.replace(/\D/g, "") || "6", 10),
           paymentPlan: selectedPlan === "full" ? "FULL" : "INSTALLMENTS",
+          courseId: "robotics-starter",
           amountInRupees,
-
         }),
       });
-      if (res.ok) {
-        const result = await res.json();
-        if (result.paymentSessionId) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const loadSdk = (): Promise<any> => {
-            return new Promise((resolve, reject) => {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              if (typeof (window as any).Cashfree !== "undefined") {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                resolve((window as any).Cashfree({ mode: (result.environment || "PRODUCTION").toLowerCase() }));
-                return;
-              }
-              const script = document.createElement("script");
-              script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
-              script.async = true;
-              script.onload = () => {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                if (typeof (window as any).Cashfree !== "undefined") {
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  resolve((window as any).Cashfree({ mode: (result.environment || "PRODUCTION").toLowerCase() }));
-                } else {
-                  reject(new Error("Cashfree SDK failed to initialize"));
-                }
-              };
-              script.onerror = () => reject(new Error("Failed to load Cashfree checkout"));
-              document.body.appendChild(script);
-            });
-          };
-
-          try {
-            const cashfree = await loadSdk();
-            await cashfree.checkout({
-              paymentSessionId: result.paymentSessionId,
-              redirectTarget: "_self",
-            });
-            return;
-          } catch (sdkErr) {
-            console.warn("[Cashfree SDK fallback to direct hosted payment gateway]", sdkErr);
-            if (result.checkoutUrl) {
-              window.location.href = result.checkoutUrl;
-              return;
-            }
-            throw sdkErr;
-          }
-        }
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (result.code === "PRICE_TAMPERING_DETECTED") refresh();
+        throw new Error(result.message || result.error || "Unable to start checkout. Please try again.");
       }
-      setEnrolSubmitted(true);
-    } catch (err) {
-      console.error(err);
-      setEnrolSubmitted(true);
+      if (!result.paymentSessionId) {
+        throw new Error("Cashfree did not return a payment session. Please try again.");
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const loadSdk = (): Promise<any> => {
+        return new Promise((resolve, reject) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          if (typeof (window as any).Cashfree !== "undefined") {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            resolve((window as any).Cashfree({ mode: (result.environment || "PRODUCTION").toLowerCase() }));
+            return;
+          }
+          const script = document.createElement("script");
+          script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
+          script.async = true;
+          script.onload = () => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (typeof (window as any).Cashfree !== "undefined") {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              resolve((window as any).Cashfree({ mode: (result.environment || "PRODUCTION").toLowerCase() }));
+            } else {
+              reject(new Error("Cashfree SDK failed to initialize"));
+            }
+          };
+          script.onerror = () => reject(new Error("Failed to load Cashfree checkout"));
+          document.body.appendChild(script);
+        });
+      };
+
+      try {
+        const cashfree = await loadSdk();
+        await cashfree.checkout({
+          paymentSessionId: result.paymentSessionId,
+          redirectTarget: "_self",
+        });
+        return;
+      } catch (sdkErr) {
+        console.warn("[Cashfree SDK fallback to direct hosted payment gateway]", sdkErr);
+        if (result.checkoutUrl) {
+          window.location.href = result.checkoutUrl;
+          return;
+        }
+        throw sdkErr;
+      }
+    } catch (error) {
+      setEnrolError(error instanceof Error ? error.message : "Unable to start checkout.");
+    } finally {
       setIsSubmitting(false);
     }
   };
@@ -1498,7 +1522,7 @@ export function TabletView() {
                     Pay in full or in two parts
                   </h3>
                   <p className="font-sans text-[13px] font-normal leading-[18px] text-[#A7ACB8]">
-                    ₹4,499 in full, or ₹4,999 in two parts.
+                    {fullFee} in full, or {totalFee} in two parts.
                   </p>
                 </div>
               </div>
@@ -1628,7 +1652,7 @@ export function TabletView() {
                     </div>
                   </div>
                   <div className="font-display text-[28px] font-normal text-white">
-                    ₹4,499
+                    {fullFee}
                   </div>
                 </button>
 
@@ -1655,12 +1679,12 @@ export function TabletView() {
                         Pay in two parts
                       </div>
                       <p className="text-[12px] text-[#A7ACB8] mt-0.5">
-                        ₹2,500 now, ₹2,499 by level 5
+                        {firstFee} now, {secondFee} by level 5
                       </p>
                     </div>
                   </div>
                   <div className="font-display text-[28px] font-normal text-white">
-                    ₹4,999
+                    {totalFee}
                   </div>
                 </button>
               </div>
@@ -1702,7 +1726,7 @@ export function TabletView() {
                 }}
                 className="flex h-[48px] w-full items-center justify-center gap-2 rounded-[10px] bg-gradient-to-r from-[#FF8B4E] via-[#FF6B2C] to-[#F2561A] text-[16px] font-semibold text-[#0B0C0F] shadow-[0px_10px_28px_-8px_rgba(255,107,44,0.35)] transition hover:brightness-105 active:scale-95"
               >
-                <span>Enrol and pay {selectedPlan === "full" ? "₹4,499" : "₹4,999"}</span>
+                <span>Enrol and pay {selectedPlan === "full" ? fullFee : firstFee}</span>
                 <ArrowRight className="size-4 stroke-[2.5]" />
               </button>
 
@@ -1780,7 +1804,7 @@ export function TabletView() {
                     Choose how to pay
                   </div>
                   <div className="mt-1 text-[13px] text-[#5A5F6B] leading-relaxed">
-                    ₹4,499 in full or ₹4,999 in two parts
+                    {fullFee} in full or {totalFee} in two parts
                   </div>
                 </div>
               </div>
@@ -1826,47 +1850,6 @@ export function TabletView() {
           {/* Expanded Student Details & Enrolment Form */}
           {isEnrolFormOpen && (
             <div className="mt-7 rounded-[18px] border border-[#E3E1D9] bg-white p-6 shadow-xl animate-in fade-in slide-in-from-top-4 duration-300">
-              {enrolSubmitted ? (
-                <div className="py-4 text-center">
-                  <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-[#109e58] text-white shadow-sm">
-                    <Check className="size-6 stroke-[3]" />
-                  </div>
-                  <h3 className="mt-4 font-display text-[22px] font-normal text-[#0B0C0F]">
-                    Enrolment request received!
-                  </h3>
-                  <p className="mt-2 text-[14px] leading-relaxed text-[#5A5F6B]">
-                    Thank you! We've sent a confirmation to WhatsApp at{" "}
-                    <strong className="text-black font-semibold">
-                      {mobileNum}
-                    </strong>{" "}
-                    and receipt to{" "}
-                    <strong className="text-black font-semibold">
-                      {parentEmail}
-                    </strong>{" "}
-                    for {childName}.
-                  </p>
-                  <div className="mt-5 rounded-xl bg-[#F4F3EE] p-4 text-left text-[13px] text-[#5A5F6B] space-y-1.5">
-                    <p>
-                      <strong className="text-[#0B0C0F]">Child:</strong> {childName} (
-                      {childGrade}, Sec {childSec})
-                    </p>
-                    <p>
-                      <strong className="text-[#0B0C0F]">School Code:</strong> {schoolCode}
-                    </p>
-                    <p>
-                      <strong className="text-[#0B0C0F]">Plan:</strong>{" "}
-                      {selectedPlan === "full" ? "₹4,499 in full" : "₹2,499 in two parts"}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setEnrolSubmitted(false)}
-                    className="mt-5 inline-block text-[13px] font-semibold text-[#FF6B2C] underline"
-                  >
-                    Edit details or enrol another child
-                  </button>
-                </div>
-              ) : (
                 <form onSubmit={handleEnrolSubmit} className="space-y-5">
                   <div className="flex items-center justify-between border-b border-[#E3E1D9] pb-3">
                     <h3 className="font-display text-[18px] font-normal text-[#0B0C0F]">
@@ -2031,9 +2014,11 @@ export function TabletView() {
                     )}
                   </div>
 
+                  {enrolError && <p role="alert" className="text-sm text-red-700">{enrolError}</p>}
+                  {unavailable && <button type="button" onClick={refresh}>Retry loading price</button>}
                   <button
                     type="submit"
-                    disabled={!isTabletFormValid || isSubmitting}
+                    disabled={!isTabletFormValid || isSubmitting || authLoading || !pricing}
                     className={cn(
                       "mt-2 flex h-[48px] w-full items-center justify-center gap-2 rounded-[8px] text-[16px] font-semibold transition",
                       isTabletFormValid && !isSubmitting
@@ -2053,7 +2038,6 @@ export function TabletView() {
                     )}
                   </button>
                 </form>
-              )}
             </div>
           )}
         </div>

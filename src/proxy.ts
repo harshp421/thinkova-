@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifySessionTokenEdge, SESSION_COOKIE_NAME } from "@/lib/auth-edge";
+import { verifySessionToken, SESSION_COOKIE_NAME } from "@/lib/auth-session";
 import {
   checkRateLimit,
   createRateLimitExceededResponse,
@@ -15,12 +15,10 @@ export async function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
   // =========================================================================
-  // 0. BYPASS AZURE SWA INTERNAL HEALTH & WARM-UP CHECKS
-  // Guarantees deployment warm-up probes (.swa/health, live) succeed instantly.
+  // 0. BYPASS HEALTH CHECKS & FAVICON
   // =========================================================================
   if (
-    pathname.startsWith("/.swa") ||
-    pathname.includes("health") ||
+    pathname === "/health" ||
     pathname === "/favicon.ico"
   ) {
     return NextResponse.next();
@@ -46,7 +44,7 @@ export async function proxy(req: NextRequest) {
     }
   }
 
-  const session = token ? await verifySessionTokenEdge(token) : null;
+  const session = token ? await verifySessionToken(token) : null;
   const isApi = pathname.startsWith("/api/");
   const isTutorRoute =
     pathname === "/tutor" ||
@@ -93,6 +91,8 @@ export async function proxy(req: NextRequest) {
   // Required: Any valid authenticated session
   // =========================================================================
   const isParentProtectedRoute =
+    (pathname.startsWith("/api/learning/") && pathname !== "/api/learning/class-reminders") ||
+    pathname === "/api/students" ||
     pathname.startsWith("/learning") ||
     pathname.startsWith("/profile") ||
     pathname === "/who-is-learning" ||
@@ -178,9 +178,13 @@ export const config = {
     "/who-is-learning/:path*",
     "/tell-us-child",
     "/tell-us-child/:path*",
+    "/api/students",
+    "/api/learning/:path*",
     "/api/auth/:path*",
     "/api/cashfree/order",
     "/api/cashfree/order/:path*",
+    "/api/cashfree/refund",
+    "/api/cashfree/refund/:path*",
     "/api/school-pack",
     "/api/events",
     "/api/notifications/status",

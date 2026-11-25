@@ -1,3 +1,4 @@
+import { requireStudentAccess } from "@/lib/student-access";
 import { NextRequest, NextResponse } from "next/server";
 import { dbManager } from "@/../backend/database/client";
 import { getStudentProgressData } from "@/data/progress-data";
@@ -5,6 +6,8 @@ import { getStudentProgressData } from "@/data/progress-data";
 export async function GET(req: NextRequest) {
   try {
     const studentId = req.nextUrl.searchParams.get("studentId");
+    const denied = await requireStudentAccess(req, studentId);
+    if (denied) return denied;
     const courseId = req.nextUrl.searchParams.get("courseId") || "ai-for-young-creators";
 
     if (!studentId) {
@@ -49,6 +52,8 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const studentId = String(body.studentId || "").trim();
+    const denied = await requireStudentAccess(req, studentId);
+    if (denied) return denied;
     const milestoneId = String(body.milestoneId || "").trim();
 
     if (!studentId) {

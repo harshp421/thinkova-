@@ -1,10 +1,10 @@
+import { enrollmentPricing } from "@/lib/enrollment-pricing";
+import { allCourses } from "@/data/tracks";
+import { dbRouter } from "@/../backend/database/router/db-router";
+import { getSessionFromRequest } from "@/lib/auth-session";
 import { NextResponse } from "next/server";
 import { cashfreeClient } from "../../../../../backend/payments/cashfree";
 import { dbManager } from "../../../../../backend/database/client";
-import type { UserEntity } from "../../../../../backend/database/types";
-import { defaultDispatcher } from "../../../../../backend/notifications/dispatcher";
-import { emailTemplates } from "../../../../../backend/templates/email-templates";
-import { whatsappTemplates } from "../../../../../backend/templates/whatsapp-templates";
 
 export const runtime = "nodejs";
 
@@ -33,6 +33,8 @@ interface CreateCashfreeOrderBody {
  */
 export async function POST(request: Request) {
   try {
+    const session = await getSessionFromRequest(request);
+    if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     let body: CreateCashfreeOrderBody;
     try {
       body = await request.json();
@@ -48,7 +50,7 @@ export async function POST(request: Request) {
       schoolUid,
       grade = 6,
       paymentPlan = "FULL",
-      orderType = paymentPlan === "INSTALLMENTS" ? "INSTALLMENT_1" : "FULL_PAYMENT",
+
       courseId = "robotics-starter",
     } = body;
 
@@ -72,101 +74,25 @@ export async function POST(request: Request) {
     // [SEC-04] Authoritative Server-Side Pricing Validation:
     // Determine the authoritative fee from the course database & plan. Prevent client-controlled price tampering.
     const course = await dbManager.schools.getCourseById(courseId);
-    const catalogCoursePrice = course?.price || 4999;
-
-    let authoritativeAmount: number;
-    if (orderType === "FULL_PAYMENT") {
-      // Allowed full payment tiers: promotional tier (4499), standard catalog (4999), premium tier (5499)
-      const allowedFullTiers = new Set([4499, 4999, 5499, catalogCoursePrice]);
-      if (body.amountInRupees !== undefined) {
-        if (!allowedFullTiers.has(body.amountInRupees)) {
-          return NextResponse.json(
-            {
-              error: `Price tampering detected: requested amount ₹${body.amountInRupees} is not an authorized fee for this course plan.`,
-              code: "PRICE_TAMPERING_DETECTED",
-            },
-            { status: 400 }
-          );
-        }
-        authoritativeAmount = body.amountInRupees;
-      } else {
-        authoritativeAmount = catalogCoursePrice;
-      }
-    } else {
-      // Installments: allowed tiers 2499, 2500, 2750, 3000, or half of course fee
-      const installmentHalf = Math.round(catalogCoursePrice / 2);
-      const allowedInstallmentTiers = new Set([2499, 2500, 2750, 3000, installmentHalf]);
-      if (body.amountInRupees !== undefined) {
-        if (!allowedInstallmentTiers.has(body.amountInRupees)) {
-          return NextResponse.json(
-            {
-              error: `Price tampering detected: requested installment amount ₹${body.amountInRupees} is not an authorized fee.`,
-              code: "PRICE_TAMPERING_DETECTED",
-            },
-            { status: 400 }
-          );
-        }
-        authoritativeAmount = body.amountInRupees;
-      } else {
-        authoritativeAmount = 2499;
-      }
+    const catalogCourse = course || allCourses.find(item => item.id === courseId);
+    if (!catalogCourse) return NextResponse.json({ error: "Course unavailable" }, { status: 404 });
+    if (!["FULL", "INSTALLMENTS"].includes(paymentPlan)) return NextResponse.json({ error: "Invalid payment plan" }, { status: 400 });
+    const amount = paymentPlan === "INSTALLMENTS" ? enrollmentPricing(catalogCourse.price).first : catalogCourse.price;
+    if (!amount || amount <= 0 || (body.amountInRupees !== undefined && body.amountInRupees !== amount)) {
+      return NextResponse.json({ error: "Price tampering detected: checkout amount differs from the course fee.", code: "PRICE_TAMPERING_DETECTED" }, { status: 400 });
     }
-
-    const amount = authoritativeAmount;
     const amountInPaise = Math.round(amount * 100);
 
-    const orderId = body.orderId || `ord_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const rawDigits = (parentPhone || "").replace(/\D/g, "");
-    const cleanPhone = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits;
-
-    // 1. Ensure Parent User entity exists in thinkova_commerce.users
-    // Look up existing user by clean phone, raw phone, +91 phone, or email to prevent E11000 duplicate key collisions
-    let user = await dbManager.commerce.getUserByPhone(cleanPhone);
-    if (!user && parentPhone !== cleanPhone) {
-      user = await dbManager.commerce.getUserByPhone(parentPhone);
-    }
-    if (!user && rawDigits.length === 10) {
-      user = await dbManager.commerce.getUserByPhone(`+91${cleanPhone}`);
-    }
-    if (!user && parentEmail) {
-      user = await dbManager.commerce.getUserByEmail(parentEmail.toLowerCase().trim());
-    }
-
-    let userId: string;
-    if (user) {
-      userId = user.id;
-      let shouldUpdate = false;
-      if (!user.phone && cleanPhone) {
-        user.phone = cleanPhone;
-        shouldUpdate = true;
-      }
-      if (!user.email && parentEmail) {
-        user.email = parentEmail.toLowerCase().trim();
-        shouldUpdate = true;
-      }
-      if (shouldUpdate) {
-        await dbManager.commerce.upsertUser(user);
-      }
-    } else {
-      userId = `usr_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      const newUser: UserEntity = {
-        id: userId,
-        phone: cleanPhone || parentPhone,
-        email: parentEmail.toLowerCase().trim(),
-        username: parentName.trim(),
-        role: "PARENT" as const,
-        isPhoneVerified: false,
-        isEmailVerified: false,
-        consentTimestamp: new Date(),
-        createdAt: new Date(),
-      };
-      await dbManager.commerce.upsertUser(newUser);
-      user = newUser;
-    }
+    const orderId = `ord_${crypto.randomUUID()}`;
+    const userId = session.userId;
+    const user = await dbManager.commerce.getUserById(userId);
+    if (!user) return NextResponse.json({ error: "Account unavailable" }, { status: 401 });
+    const cleanPhone = (user.phone || parentPhone).replace(/\D/g, "").slice(-10);
 
     // 2. Ensure Student entity exists in thinkova_commerce.students (re-use if provided or found by name)
     let studentId = body.studentId;
     let student = studentId ? await dbManager.commerce.getStudentById(studentId) : null;
+    if (studentId && student?.parentUserId !== userId) return NextResponse.json({ error: "Student unavailable" }, { status: 404 });
     if (!student) {
       const parentStudents = await dbManager.commerce.getStudentsByParentId(userId);
       student =
@@ -248,7 +174,20 @@ export async function POST(request: Request) {
       enrolledAt: new Date(),
       installment2Paid: false,
     };
-    await dbManager.commerce.upsertEnrollment(enrollment);
+    await dbRouter.commerceTransaction(async () => {
+      await dbManager.commerce.upsertEnrollment(enrollment);
+      await dbManager.commerce.upsertOrder({
+        id: orderId,
+        enrollmentId,
+        userId,
+        orderType: paymentPlan === "INSTALLMENTS" ? "INSTALLMENT_1" : "FULL_PAYMENT",
+        amountInPaise,
+        status: "AWAITING_PAYMENT",
+        checkoutUrl: "",
+        expiresAt: new Date(Date.now() + 2 * 3600 * 1000),
+        createdAt: new Date(),
+      });
+    });
 
     // 4. Create Cashfree Gateway Order
     const cfOrder = await cashfreeClient.createOrder({
@@ -258,7 +197,7 @@ export async function POST(request: Request) {
       customer: {
         customerId: userId,
         customerName: parentName,
-        customerEmail: parentEmail,
+        customerEmail: user.email,
         customerPhone: cleanPhone || parentPhone,
       },
       orderNote: `ThinkOva Course Admission - ${schoolUid.toUpperCase()} (${studentName})`,
@@ -267,22 +206,11 @@ export async function POST(request: Request) {
 
     const checkoutUrl = cfOrder.checkoutUrl || "";
 
-    // 5. Persist Order in thinkova_commerce.orders
-    await dbManager.commerce.upsertOrder({
-      id: orderId,
-      enrollmentId,
-      userId,
-      orderType,
-      amountInPaise,
-      status: "AWAITING_PAYMENT",
-      checkoutUrl,
-      expiresAt: new Date(Date.now() + 2 * 3600 * 1000),
-      createdAt: new Date(),
-    });
+    await dbRouter.update("orders", orderId, { checkoutUrl }, "commerce");
 
     return NextResponse.json({
       status: "success",
-      orderId: cfOrder.orderId,
+      orderId,
       cfOrderId: cfOrder.cfOrderId,
       paymentSessionId: cfOrder.paymentSessionId,
       orderStatus: cfOrder.orderStatus,
@@ -306,107 +234,13 @@ export async function POST(request: Request) {
  * Checks order status from Cashfree and triggers DB confirmation, inner-join relations & curriculum initialization.
  */
 export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const orderId = searchParams.get("orderId");
-
-    if (!orderId) {
-      return NextResponse.json({ error: "Missing required 'orderId' query parameter" }, { status: 422 });
-    }
-
-    const dbOrder = await dbManager.commerce.getOrderById(orderId);
-    const cfOrder = await cashfreeClient.getOrder(orderId);
-
-    // Check if Cashfree verifies that order is PAID or DB is marked PAID
-    const isPaid = cfOrder.orderStatus === "PAID" || dbOrder?.status === "PAID";
-    let joinedDetails = null;
-
-    if (isPaid) {
-      // Triggers payment storage, order confirmation, student enrollment, and course curriculum progress
-      joinedDetails = await dbManager.commerce.confirmOrderAndEnrollment({
-        orderId,
-        gatewayOrderId: cfOrder.cfOrderId || orderId,
-        paymentId: `cf_${Date.now()}`,
-        paymentMethod: "UPI",
-        amountInPaise: Math.round((cfOrder.orderAmount || 4999) * 100),
-      });
-
-      // Dual-trigger idempotent confirmation dispatch:
-      if (joinedDetails && (!dbOrder?.enrolmentNotificationSentAt)) {
-        try {
-          const user = joinedDetails.user;
-          const student = joinedDetails.student;
-          const enrollment = joinedDetails.enrollment;
-          const course = joinedDetails.course;
-          const batch = joinedDetails.batch;
-          const school = enrollment ? await dbManager.schools.findByUid(enrollment.schoolUid) : null;
-          const tutor = batch ? await dbManager.schools.getTutor(batch.tutorId) : null;
-          const amountPaidStr = `₹${((cfOrder.orderAmount || 4999)).toLocaleString("en-IN")}`;
-
-          if (user?.email) {
-            const email = emailTemplates.enrolmentSuccess({
-              parentName: user.username || "Parent",
-              studentName: student?.fullName || "Student",
-              currentGrade: student?.currentGrade || 6,
-              schoolName: school?.officialName || enrollment?.schoolUid || "ThinkOva Lab",
-              batchSchedule: batch ? `${batch.dayOfWeek}s ${batch.startTime}` : "Weekly Lab Sessions",
-              tutorName: tutor?.fullName || "Lead AI Mentor",
-              amountPaid: amountPaidStr,
-              orderId,
-            });
-
-            await defaultDispatcher.sendEmail({
-              to: user.email,
-              subject: email.subject,
-              html: email.html,
-              text: email.text,
-              metadata: { orderId, gateway: "CASHFREE", courseId: course?.id, source: "CONFIRMATION_SCREEN" },
-            });
-          }
-
-          if (user?.phone) {
-            const wa = whatsappTemplates.enrolmentConfirmed({
-              parentPhone: user.phone,
-              parentName: user.username || "Parent",
-              studentName: student?.fullName || "Student",
-              schoolName: school?.officialName || enrollment?.schoolUid || "ThinkOva Lab",
-              grade: student?.currentGrade || 6,
-              orderId,
-              amountPaid: amountPaidStr,
-              startDate: batch ? `${batch.dayOfWeek}s ${batch.startTime}` : "Next Session",
-            });
-
-            await defaultDispatcher.sendWhatsApp({
-              to: user.phone,
-              templateName: wa.templateName,
-              fallbackText: wa.fallbackText,
-              components: wa.components,
-              metadata: { orderId, gateway: "CASHFREE", courseId: course?.id, source: "CONFIRMATION_SCREEN" },
-            });
-          }
-
-          await dbManager.commerce.markAlertSent("ENROLMENT", orderId);
-        } catch (dispatchErr) {
-          console.error("[Cashfree Order GET] Failed to dispatch automated notifications:", dispatchErr);
-        }
-      }
-    } else {
-      joinedDetails = await dbManager.commerce.getOrderWithJoinedDetails(orderId);
-    }
-
-    return NextResponse.json({
-      status: "ok",
-      orderId,
-      dbStatus: isPaid ? "PAID" : dbOrder?.status || "NOT_FOUND",
-      cashfreeStatus: cfOrder.orderStatus,
-      amount: cfOrder.orderAmount,
-      currency: cfOrder.orderCurrency,
-      isPaid,
-      joinedDetails,
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("[Cashfree Order Status Error]:", err);
-    return NextResponse.json({ status: "error", message }, { status: 500 });
-  }
+  const session = await getSessionFromRequest(request);
+  if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  const id = new URL(request.url).searchParams.get("orderId");
+  const order = id && await dbManager.commerce.getOrderById(id);
+  if (!order || order.userId !== session.userId) return NextResponse.json({ error: "Order unavailable" }, { status: 404 });
+  const enrollment = await dbManager.commerce.getEnrollmentById(order.enrollmentId);
+  const student = enrollment && await dbManager.commerce.getStudentById(enrollment.studentId);
+  if (!enrollment || student?.parentUserId !== session.userId) return NextResponse.json({ error: "Order unavailable" }, { status: 404 });
+  return NextResponse.json({ courseId: enrollment.courseId, studentName: student.fullName, schoolName: student.schoolName, orderId: id, dbStatus: order.status, isPaid: order.status === "PAID", amount: order.amountInPaise / 100, currency: "INR" });
 }
