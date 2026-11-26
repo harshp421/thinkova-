@@ -91,7 +91,7 @@ it("records a virtual Cashfree refund, sends its OpenWA notice once, and persist
   if (auditDriver) expect(dbRouter.getDriverForDomain("commerce")).toBe(auditDriver);
   const token = await createTestSession({
     userId: "usr_parent_01", email: "parent@example.test", username: "Test Parent",
-    fullName: "Test Parent", role: "PARENT", phone: "9000000000",
+    fullName: "Test Parent", role: "SUPER_ADMIN", phone: "9000000000",
   });
   await dbManager.commerce.upsertPayment({
     id: "virtual-refund-payment", orderId: "ord_paid_202", gateway: "CASHFREE",
@@ -101,7 +101,7 @@ it("records a virtual Cashfree refund, sends its OpenWA notice once, and persist
 
   const response = await createRefund(new Request("https://thinkova.example.test/api/cashfree/refund", {
     method: "POST", headers: { authorization: "Bearer " + token },
-    body: JSON.stringify({ orderId: "ord_paid_202", refundAmountInRupees: 2499, reason: "DEMO_DAY_GUARANTEE" }),
+    body: JSON.stringify({ orderId: "ord_paid_202", refundAmountInRupees: 2499, reason: "CLIENT_WITHDRAWAL" }),
   }));
   const result = await response.json();
   expect(response.status, JSON.stringify(result)).toBe(200);
@@ -136,8 +136,8 @@ it("records a virtual Cashfree refund, sends its OpenWA notice once, and persist
   expect(await readRefund()).toMatchObject({
     status: "COMPLETED", completedAt: expect.any(Date), refundAlertSentAt: expect.any(Date),
   });
-  expect((await dbManager.commerce.getPaymentByOrderId("ord_paid_202"))?.status).toBe("REFUNDED");
-  expect((await dbManager.commerce.getEnrollmentById("enr_01"))?.status).toBe("REFUNDED");
+  expect((await dbManager.commerce.getPaymentByOrderId("ord_paid_202"))?.status).toBe("SUCCESS");
+  expect((await dbManager.commerce.getEnrollmentById("enr_01"))?.status).toBe("ENROLLED");
   if (auditDriver) {
     const persisted = await auditDriver.get<RefundEntity>("refunds", id);
     expect(persisted).toMatchObject({ status: "COMPLETED", refundAlertSentAt: expect.any(Date) });

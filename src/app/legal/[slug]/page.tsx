@@ -29,9 +29,24 @@ export default async function LegalPlaceholderPage({ params }: { params: Params 
       <main id="main" className="bg-cream py-24 text-ink">
         <Container className="max-w-2xl">
           <h1 className="font-display text-4xl tracking-[-0.03em]">{page.title}</h1>
-          <p className="mt-4 text-lg leading-relaxed text-muted">
-            {page.note} will be published here. Replace this page (or point the link to your hosted PDF) before launch.
-          </p>
+          {slug === "refunds" ? (
+            <div className="mt-4 space-y-4 text-lg text-muted">
+              <p>Contact ThinkOva support to request a refund. We review requests before starting a refund through Cashfree.</p>
+              <p>For the Demo Day guarantee, the student must attend at least six of eight classes and the tutor must confirm that their project did not complete the two agreed tasks on Demo Day.</p>
+              <p>For a paid-in-full order, the guarantee covers half the amount paid. For an installment plan, it covers the second installment once paid. Partial refunds preserve enrollment access. A refund of all amounts paid ends access.</p>
+              <p>Standard refunds are expected to reach the original payment method in five to seven business days after initiation.</p>
+            </div>
+          ) : slug === "terms" ? (
+            <div className="mt-4 space-y-4 text-lg text-muted">
+              <p>A parent or guardian enrolls the student and approves the course, fees, and safety terms.</p>
+              <p>Pay the full fee at checkout or choose the two-part plan. The first installment is ₹3,000, the total is ₹500 above the full fee, and the balance is due by Level 5.</p>
+              <p>Payment confirmation activates enrollment. The refund page explains how to request a refund.</p>
+            </div>
+          ) : (
+            <p className="mt-4 text-lg leading-relaxed text-muted">
+              {page.note} will be published here.
+            </p>
+          )}
           {slug === "curriculum" && (
             <div className="mt-6">
               <a

@@ -19,6 +19,7 @@ interface CreateRefundBody {
   refundAmountInRupees?: number;
   refundSpeed?: "STANDARD" | "INSTANT";
   note?: string;
+  demoDayFailed?: boolean;
 }
 
 /**
@@ -65,6 +66,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Order unavailable" }, { status: 404 });
     }
 
+    if (!isAdmin) return NextResponse.json({ error: "ThinkOva must review and approve refunds. Contact support to request one." }, { status: 403 });
+
     if (order.status !== "PAID") {
       return NextResponse.json(
         { error: `Order ${orderId} is not eligible for refund (status: ${order.status}).` },
@@ -77,7 +80,7 @@ export async function POST(request: Request) {
       dbManager.commerce.getEnrollmentById(order.enrollmentId),
     ]);
 
-    if (!payment || payment.status === "FAILED") {
+    if (!payment || payment.status !== "SUCCESS") {
       return NextResponse.json(
         { error: "No successful payment record found for this order." },
         { status: 409 }
@@ -88,37 +91,52 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Enrollment not found for this order." }, { status: 404 });
     }
 
-    const maxRefundRupees = order.amountInPaise / 100;
-    const refundAmountRupees =
-      body.refundAmountInRupees !== undefined ? Number(body.refundAmountInRupees) : maxRefundRupees;
-
-    if (!Number.isFinite(refundAmountRupees) || refundAmountRupees <= 0 || refundAmountRupees > maxRefundRupees) {
+    if (enrollment.status !== "ENROLLED") {
       return NextResponse.json(
-        {
-          error: `Invalid refund amount: must be greater than 0 and at most ₹${maxRefundRupees}.`,
-          code: "INVALID_REFUND_AMOUNT",
-        },
-        { status: 400 }
+        { error: `Enrollment ${enrollment.id} is not registered/active for refund (status: ${enrollment.status}).` },
+        { status: 409 }
       );
     }
 
-    const reason: RefundEntity["reason"] =
-      body.reason && ALLOWED_REASONS.has(body.reason) ? body.reason : "DEMO_DAY_GUARANTEE";
-    const initiatedBy: RefundEntity["initiatedBy"] = isAdmin ? "MANAGEMENT" : "CLIENT";
+    const reason = body.reason;
+    if (!reason || !ALLOWED_REASONS.has(reason)) {
+      return NextResponse.json({ error: "Select a valid refund reason." }, { status: 422 });
+    }
+    const maxAmount = Math.min(order.amountInPaise, payment.amountInPaise);
+    let amountInPaise: number;
+    if (reason === "DEMO_DAY_GUARANTEE") {
+      const assessments = await dbManager.commerce.getAssessmentsByStudentId(enrollment.studentId);
+      const attended = new Set(assessments.filter(record => record.cohortBatchId === enrollment.cohortBatchId &&
+        record.attendance === "PRESENT" && record.levelNumber >= 1 && record.levelNumber <= 8).map(record => record.levelNumber));
+      if (attended.size < 6 || body.demoDayFailed !== true ||
+        (enrollment.paymentPlan === "INSTALLMENTS" && order.orderType !== "INSTALLMENT_2")) {
+        return NextResponse.json({ error: "Demo Day guarantee eligibility has not been confirmed." }, { status: 409 });
+      }
+      amountInPaise = order.orderType === "INSTALLMENT_2" ? maxAmount : Math.floor(maxAmount / 2);
+    } else {
+      amountInPaise = Math.round(Number(body.refundAmountInRupees) * 100);
+    }
+    if (!Number.isSafeInteger(amountInPaise) || amountInPaise <= 0 || amountInPaise > maxAmount ||
+      (body.refundAmountInRupees !== undefined && Math.round(Number(body.refundAmountInRupees) * 100) !== amountInPaise)) {
+      return NextResponse.json({ error: "Refund amount does not match the approved policy.", code: "INVALID_REFUND_AMOUNT" }, { status: 400 });
+    }
+    const initiatedBy = "MANAGEMENT" as const;
     const refundSpeed: "STANDARD" | "INSTANT" = body.refundSpeed === "INSTANT" ? "INSTANT" : "STANDARD";
     const refundId = `ref_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
-    const amountInPaise = Math.round(refundAmountRupees * 100);
 
     // Atomically guard against concurrent double-refunds before calling Cashfree
     const claimed = await dbRouter.commerceTransaction(async () => {
+      await dbRouter.update("enrollments", enrollment.id, { refundClaimId: refundId }, "commerce");
       const existingRefunds = await dbManager.commerce.getRefundsByEnrollmentId(enrollment.id);
       const activeRefund = existingRefunds.find(
-        (r) => r.status === "INITIATED" || r.status === "PROCESSING" || r.status === "COMPLETED"
+        (r) => r.paymentId === payment.id && r.status !== "FAILED"
       );
       if (activeRefund) {
         return { conflict: activeRefund };
       }
 
+      // Reserve with PROCESSING (never INITIATED) until Cashfree accepts the refund,
+      // so refundStatusJob cannot touch refund_deliveries if the gateway call is in-flight or fails.
       const initialRefund: RefundEntity = {
         id: refundId,
         paymentId: payment.id,
@@ -126,7 +144,7 @@ export async function POST(request: Request) {
         amountInPaise,
         reason,
         initiatedBy,
-        status: "INITIATED",
+        status: "PROCESSING",
         estimatedCreditDays: refundSpeed === "INSTANT" ? "1–2 business days" : "5–7 business days",
         initiatedAt: new Date(),
       };
@@ -151,15 +169,12 @@ export async function POST(request: Request) {
       cfRefund = await cashfreeClient.createRefund({
         orderId,
         refundId,
-        refundAmount: refundAmountRupees,
+        refundAmount: amountInPaise / 100,
         refundNote: body.note || `ThinkOva Refund (${reason})`,
         refundSpeed,
       });
     } catch (gatewayErr: unknown) {
-      await dbManager.commerce.applyRefundLifecycleStatus({
-        refundId,
-        status: "FAILED",
-      });
+      // Keep a refund with an unknown gateway outcome reserved for reconciliation.
       const message = gatewayErr instanceof Error ? gatewayErr.message : String(gatewayErr);
       return NextResponse.json({ status: "error", message }, { status: 502 });
     }

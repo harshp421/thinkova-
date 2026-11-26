@@ -106,6 +106,7 @@ export async function seedDynamicTestData(driver = "memory") {
     currentLevel: 4,
     enrolledAt: new Date(),
     installment2Paid: false,
+    installmentBalanceInPaise: 249900,
   });
 
   // 7. Dynamic Abandoned Order (> 70 mins old)
@@ -121,17 +122,29 @@ export async function seedDynamicTestData(driver = "memory") {
     createdAt: new Date(Date.now() - 70 * 60 * 1000),
   });
 
-  // 8. Dynamic Newly Paid Order
+  // 8. Dynamic Newly Paid Order & Verified Payment
   await dbManager.commerce.upsertOrder({
     id: "ord_paid_202",
     enrollmentId: "enr_01",
     userId: "usr_parent_01",
-    orderType: "FULL_PAYMENT",
-    amountInPaise: 499900,
+    orderType: "INSTALLMENT_1",
+    amountInPaise: 300000,
     status: "PAID",
     checkoutUrl: "https://thinkova.ai/enrol/checkout?orderId=ord_paid_202",
     expiresAt: new Date(Date.now() + 2 * 3600 * 1000),
     createdAt: new Date(Date.now() - 5 * 60 * 1000),
+  });
+
+  await dbManager.commerce.upsertPayment({
+    id: "pay_paid_202",
+    orderId: "ord_paid_202",
+    gateway: "CASHFREE",
+    gatewayOrderId: "ord_paid_202",
+    gatewayPaymentId: "cf_pay_202",
+    paymentMethod: "UPI",
+    amountInPaise: 300000,
+    status: "SUCCESS",
+    paidAt: new Date(Date.now() - 5 * 60 * 1000),
   });
 
   // 9. Dynamic Unsent Weekly Assessment / Evaluation

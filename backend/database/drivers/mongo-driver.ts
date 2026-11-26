@@ -8,6 +8,10 @@ import type {
   QueryOptions,
 } from "./interface";
 
+function mongoQuery(filter?: QueryFilter) {
+  return Object.fromEntries(Object.entries(filter ?? {}).filter(([, value]) => value !== undefined));
+}
+
 /**
  * MongoDB Production Database Driver
  * High-performance driver for MongoDB Atlas and self-hosted MongoDB clusters.
@@ -128,17 +132,7 @@ export class MongoDatabaseDriver implements IDatabaseDriver {
 
   public async find<T>(collection: string, filter?: QueryFilter, options?: QueryOptions): Promise<T[]> {
     const db = await this.getDb();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const query: any = {};
-    if (filter) {
-      for (const [key, value] of Object.entries(filter)) {
-        if (value !== undefined) {
-          query[key] = value;
-        }
-      }
-    }
-
-    let cursor = db.collection(collection).find(query, { session: this.transactionSession.getStore() });
+    let cursor = db.collection(collection).find(mongoQuery(filter), { session: this.transactionSession.getStore() });
 
     if (options?.sort) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -161,6 +155,13 @@ export class MongoDatabaseDriver implements IDatabaseDriver {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { _id, ...rest } = doc as any;
       return { id: rest.id || String(_id), ...rest } as T;
+    });
+  }
+
+  public async count(collection: string, filter?: QueryFilter): Promise<number> {
+    const db = await this.getDb();
+    return db.collection(collection).countDocuments(mongoQuery(filter), {
+      session: this.transactionSession.getStore(),
     });
   }
 

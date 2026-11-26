@@ -6,12 +6,42 @@ import { dbManager } from "../database/client";
 import { emailTemplates } from "../templates/email-templates";
 import { defaultDispatcher } from "../notifications/dispatcher";
 
-// Atomically claim each refund delivery channel before contacting external providers
-// so retries never send duplicate refund emails or WhatsApp messages.
-async function deliverOnce(id: string, send: () => Promise<{ status: string }>) {
+// Atomically claim each refund delivery channel before contacting external providers,
+// ONLY after re-verifying inside the transaction that the refund was initiated at the gateway
+// and is backed by a registered enrollment and completed payment.
+async function deliverOnce(
+  refundId: string,
+  channel: "email" | "whatsapp",
+  send: () => Promise<{ status: string }>
+) {
+  const id = `${refundId}:${channel}`;
   const state = await dbRouter.commerceTransaction(async () => {
+    const refund = await dbManager.commerce.getRefundById(refundId);
+    if (
+      !refund ||
+      !["INITIATED", "PROCESSING", "COMPLETED"].includes(refund.status) ||
+      refund.refundAlertSentAt ||
+      !refund.gatewayRefundId?.trim()
+    ) {
+      return "INELIGIBLE";
+    }
+    const [enrollment, payment] = await Promise.all([
+      dbManager.commerce.getEnrollmentById(refund.enrollmentId),
+      dbRouter.get<{ orderId: string; status: string }>("payments", refund.paymentId, "commerce"),
+    ]);
+    if (!enrollment || (enrollment.status !== "ENROLLED" && enrollment.status !== "REFUNDED")) {
+      return "INELIGIBLE";
+    }
+    if (!payment || (payment.status !== "SUCCESS" && payment.status !== "REFUNDED")) {
+      return "INELIGIBLE";
+    }
+    const order = await dbManager.commerce.getOrderById(payment.orderId);
+    if (!order || order.status !== "PAID") {
+      return "INELIGIBLE";
+    }
+
     const previous = await dbRouter.get<{ status: string }>("refund_deliveries", id, "commerce");
-    if (previous) return previous.status;
+    if (previous && previous.status !== "FAILED") return previous.status;
     await dbRouter.upsert("refund_deliveries", { id, status: "PENDING", createdAt: new Date() }, "commerce");
     return "CLAIMED";
   });
@@ -41,7 +71,7 @@ export const refundStatusJob: JobDefinition<RefundRecord> = {
       const email = emailTemplates.refundNotification(record);
 
       const [emailSent, whatsAppSent] = await Promise.all([
-        deliverOnce(`${record.refundId}:email`, () =>
+        deliverOnce(record.refundId, "email", () =>
           defaultDispatcher.sendEmail({
             to: record.parentEmail,
             subject: email.subject,
@@ -56,11 +86,11 @@ export const refundStatusJob: JobDefinition<RefundRecord> = {
         ),
         !record.parentPhone?.trim()
           ? Promise.resolve(true)
-          : deliverOnce(`${record.refundId}:whatsapp`, () =>
+          : deliverOnce(record.refundId, "whatsapp", () =>
               defaultDispatcher.sendWhatsApp({
                 to: record.parentPhone,
                 templateName: "thinkova_de_enrollment_v1",
-                fallbackText: `Hi ${record.parentName}, a refund of ${record.refundAmount} has been initiated for ${record.studentName} (Ref: ${record.refundReference}). Bank credit expected within ${record.estimatedCreditDays}.`,
+                fallbackText: `Hi ${record.parentName}, a refund of ${record.refundAmount} has been ${record.completed ? "processed" : "initiated"} for ${record.studentName} (Ref: ${record.refundReference}). Bank credit expected within ${record.estimatedCreditDays}.`,
                 metadata: {
                   refundReference: record.refundReference,
                 },

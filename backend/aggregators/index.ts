@@ -63,6 +63,8 @@ export const preAggregators: PreAggregatorCollection = {
     const records: InstallmentDueRecord[] = [];
 
     for (const item of rawInstallments) {
+      const balance = await dbManager.commerce.getInstallmentBalance(item.enrollment, item.user.id);
+      if (balance === null) continue;
       const school = await dbManager.schools.findByUid(item.student.schoolUid);
       const batch = await dbManager.schools.getBatch(item.batchId);
 
@@ -82,10 +84,10 @@ export const preAggregators: PreAggregatorCollection = {
         parentPhone: item.user.phone || "",
         studentName: item.student.fullName,
         schoolName: school?.officialName || item.student.schoolUid,
-        installmentAmount: "₹2,499",
+        installmentAmount: formatPaiseToRupees(balance),
         dueDate,
         levelStartName: "Think like an agent designer",
-        paymentUrl: `${siteUrl}/parent/payments?enrollmentId=${item.enrollment.id}`,
+        paymentUrl: `${siteUrl}/parent/payments?enrollmentId=${encodeURIComponent(item.enrollment.id)}`,
       });
     }
 
@@ -171,6 +173,7 @@ export const preAggregators: PreAggregatorCollection = {
     for (const item of rawRefunds) {
       records.push({
         refundId: item.refund.id,
+        completed: item.refund.status === "COMPLETED",
         parentName: item.user.username || item.user.email,
         parentEmail: item.user.email,
         parentPhone: item.user.phone || "",

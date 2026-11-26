@@ -99,6 +99,7 @@ describe("End-to-End Payment + Cashfree Refund Pipeline, Dispatcher & DB Load", 
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        termsAccepted: true,
         studentName: "Kabir Mehta",
         parentName: "Anjali Mehta",
         parentEmail: "anjali.mehta@example.com",
@@ -143,12 +144,20 @@ describe("End-to-End Payment + Cashfree Refund Pipeline, Dispatcher & DB Load", 
     expect(orderStatusRes.status).toBe(200);
     expect((await orderStatusRes.json()).isPaid).toBe(true);
 
+    const staffToken = await createTestSession({ userId: "refund-admin", email: "staff@example.test", username: "staff", fullName: "Staff", role: "SUPER_ADMIN" });
+    const staffAuth = "Bearer " + staffToken;
+    const unapproved = await createRefundHandler(new Request("http://localhost:3000/api/cashfree/refund", {
+      method: "POST", headers: { authorization: staffAuth },
+      body: JSON.stringify({ orderId, reason: "DEMO_DAY_GUARANTEE", demoDayFailed: true }),
+    }));
+    expect(unapproved.status).toBe(409);
+
     // 3. Initiate Refund via POST /api/cashfree/refund
     const refundRes = await createRefundHandler(
       new Request("http://localhost:3000/api/cashfree/refund", {
         method: "POST",
-        headers: { "Content-Type": "application/json", authorization: parentAuth },
-        body: JSON.stringify({ orderId, reason: "DEMO_DAY_GUARANTEE" }),
+        headers: { "Content-Type": "application/json", authorization: staffAuth },
+        body: JSON.stringify({ orderId, reason: "CLIENT_WITHDRAWAL", refundAmountInRupees: 4499 }),
       })
     );
     expect(refundRes.status).toBe(200);
@@ -162,8 +171,8 @@ describe("End-to-End Payment + Cashfree Refund Pipeline, Dispatcher & DB Load", 
     const dupRefundRes = await createRefundHandler(
       new Request("http://localhost:3000/api/cashfree/refund", {
         method: "POST",
-        headers: { "Content-Type": "application/json", authorization: parentAuth },
-        body: JSON.stringify({ orderId, reason: "DEMO_DAY_GUARANTEE" }),
+        headers: { "Content-Type": "application/json", authorization: staffAuth },
+        body: JSON.stringify({ orderId, reason: "CLIENT_WITHDRAWAL", refundAmountInRupees: 4499 }),
       })
     );
     expect(dupRefundRes.status).toBe(409);
@@ -238,6 +247,7 @@ describe("End-to-End Payment + Cashfree Refund Pipeline, Dispatcher & DB Load", 
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        termsAccepted: true,
         studentName: "Mira Nair",
         parentName: "Deepa Nair",
         parentEmail: "deepa.nair@example.com",
@@ -296,12 +306,17 @@ describe("End-to-End Payment + Cashfree Refund Pipeline, Dispatcher & DB Load", 
     );
     expect(idorRes.status).toBe(404);
 
+    const ownerRefund = await createRefundHandler(new Request("http://localhost:3000/api/cashfree/refund", {
+      method: "POST", headers: { authorization: ownerAuth }, body: JSON.stringify({ orderId }),
+    }));
+    expect(ownerRefund.status).toBe(403);
+    const adminToken = await createTestSession({ userId: "refund-admin", email: "staff@example.test", username: "staff", fullName: "Staff", role: "SUPER_ADMIN" });
     // Over-refund tampering -> 400
     const tamperRes = await createRefundHandler(
       new Request("http://localhost:3000/api/cashfree/refund", {
         method: "POST",
-        headers: { "Content-Type": "application/json", authorization: ownerAuth },
-        body: JSON.stringify({ orderId, refundAmountInRupees: 99999 }),
+        headers: { "Content-Type": "application/json", authorization: "Bearer " + adminToken },
+        body: JSON.stringify({ orderId, reason: "CLIENT_WITHDRAWAL", refundAmountInRupees: 99999 }),
       })
     );
     expect(tamperRes.status).toBe(400);
@@ -338,6 +353,28 @@ describe("End-to-End Payment + Cashfree Refund Pipeline, Dispatcher & DB Load", 
       currentLevel: 1,
       enrolledAt: new Date(),
       installment2Paid: true,
+    });
+    await dbManager.commerce.upsertOrder({
+      id: "ord_nophone",
+      enrollmentId: "enr_nophone",
+      userId: "usr_nophone",
+      orderType: "FULL_PAYMENT",
+      amountInPaise: 449900,
+      status: "PAID",
+      checkoutUrl: "https://sandbox.example.test/checkout",
+      expiresAt: new Date(Date.now() + 3600000),
+      createdAt: new Date(),
+    });
+    await dbManager.commerce.upsertPayment({
+      id: "pay_nophone",
+      orderId: "ord_nophone",
+      gateway: "CASHFREE",
+      gatewayOrderId: "ord_nophone",
+      gatewayPaymentId: "cf_pay_nophone",
+      paymentMethod: "UPI",
+      amountInPaise: 449900,
+      status: "SUCCESS",
+      paidAt: new Date(),
     });
     await dbManager.commerce.upsertRefund({
       id: "ref_nophone",
@@ -398,6 +435,28 @@ describe("End-to-End Payment + Cashfree Refund Pipeline, Dispatcher & DB Load", 
         enrolledAt: new Date(),
         installment2Paid: true,
       });
+      await dbManager.commerce.upsertOrder({
+        id: `ord_load_${i}`,
+        enrollmentId: eid,
+        userId: uid,
+        orderType: "FULL_PAYMENT",
+        amountInPaise: 499900,
+        status: "PAID",
+        checkoutUrl: "https://sandbox.example.test/checkout",
+        expiresAt: new Date(Date.now() + 3600000),
+        createdAt: new Date(),
+      });
+      await dbManager.commerce.upsertPayment({
+        id: `pay_load_${i}`,
+        orderId: `ord_load_${i}`,
+        gateway: "CASHFREE",
+        gatewayOrderId: `ord_load_${i}`,
+        gatewayPaymentId: `cf_pay_load_${i}`,
+        paymentMethod: "UPI",
+        amountInPaise: 499900,
+        status: "SUCCESS",
+        paidAt: new Date(),
+      });
       await dbManager.commerce.upsertRefund({
         id: `ref_load_${i}`,
         paymentId: `pay_load_${i}`,
@@ -418,8 +477,8 @@ describe("End-to-End Payment + Cashfree Refund Pipeline, Dispatcher & DB Load", 
     const preAgg = await preAggregators.pendingRefunds();
     expect(preAgg.count).toBe(batchCount);
 
-    // Batched $in queries: 1 find(refunds) + 1 find(enrollments) + 1 find(students) + 1 find(users) = 4 reads, 0 N+1 gets!
-    expect(findSpy.mock.calls.length).toBe(4);
+    // Batched $in queries: refunds + enrollments + payments + orders + students + users = constant 6 reads, 0 N+1 gets!
+    expect(findSpy.mock.calls.length).toBe(6);
     expect(getSpy.mock.calls.length).toBe(0);
 
     console.info("[OPTIMIZED 25-REFUND PRE-AGG DB LOAD]", {
@@ -428,5 +487,138 @@ describe("End-to-End Payment + Cashfree Refund Pipeline, Dispatcher & DB Load", 
       getCalls: getSpy.mock.calls.length,
       previousNPlus1Reads: 1 + 3 * batchCount,
     });
+  });
+
+  it("5. Blocks enrollment_deliveries and refund_deliveries when payment/enrollment is unregistered or Cashfree throws", async () => {
+    // A. Gateway failure leaves an audit record but releases the seat.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("Cashfree Gateway Error", { status: 502 }))
+    );
+
+    const beforeEnrollments = (await dbRouter.find("enrollments", undefined, undefined, "commerce")).length;
+    const beforeOrders = (await dbRouter.find("orders", undefined, undefined, "commerce")).length;
+
+    const failedOrderReq = new Request("http://localhost:3000/api/cashfree/order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        termsAccepted: true,
+        studentName: "Throw Guard Student",
+        parentName: "Throw Guard Parent",
+        parentEmail: "throw.guard@example.com",
+        parentPhone: "9833445566",
+        schoolUid: "PARTNER SCHOOL",
+        grade: 6,
+        paymentPlan: "FULL",
+        courseId: "ai-study-helper",
+        amountInRupees: 4499,
+      }),
+    });
+    await authenticateParent(failedOrderReq, "usr_throw_guard");
+    const failedOrderRes = await createOrderHandler(failedOrderReq);
+    expect(failedOrderRes.status).toBe(500);
+
+    expect((await dbRouter.find("enrollments", undefined, undefined, "commerce")).length).toBe(beforeEnrollments + 1);
+    expect(await dbRouter.find("enrollments", { status: "DROPPED" }, undefined, "commerce")).toHaveLength(1);
+    expect((await dbRouter.find("orders", undefined, undefined, "commerce")).length).toBe(beforeOrders + 1);
+    expect(await dbRouter.find("orders", { status: "FAILED" }, undefined, "commerce")).toHaveLength(1);
+
+    // B. Unregistered (PENDING_PAYMENT) / REFUNDED enrollment & missing payment -> 0 enrollment_deliveries written
+    // Mark seeded ord_paid_202 as already sent so we isolate only our invalid records
+    await dbManager.commerce.markAlertSent("ENROLMENT", "ord_paid_202");
+
+    await dbManager.commerce.upsertEnrollment({
+      id: "enr_unpaid_guard",
+      studentId: "stu_01",
+      cohortBatchId: "batch_dps_01",
+      schoolUid: "DPS-PUN-01",
+      paymentPlan: "FULL",
+      status: "PENDING_PAYMENT",
+      currentLevel: 1,
+      enrolledAt: new Date(),
+    });
+    await dbManager.commerce.upsertOrder({
+      id: "ord_unpaid_guard",
+      enrollmentId: "enr_unpaid_guard",
+      userId: "usr_parent_01",
+      orderType: "FULL_PAYMENT",
+      amountInPaise: 449900,
+      status: "PAID", // Even if order is marked PAID without registration/payment
+      checkoutUrl: "https://sandbox.example.test/checkout",
+      expiresAt: new Date(Date.now() + 3600000),
+      createdAt: new Date(),
+    });
+
+    // Refunded enrollment whose order is still PAID
+    await dbManager.commerce.upsertEnrollment({
+      id: "enr_already_refunded",
+      studentId: "stu_01",
+      cohortBatchId: "batch_dps_01",
+      schoolUid: "DPS-PUN-01",
+      paymentPlan: "FULL",
+      status: "REFUNDED",
+      currentLevel: 1,
+      enrolledAt: new Date(),
+    });
+    await dbManager.commerce.upsertOrder({
+      id: "ord_already_refunded",
+      enrollmentId: "enr_already_refunded",
+      userId: "usr_parent_01",
+      orderType: "FULL_PAYMENT",
+      amountInPaise: 449900,
+      status: "PAID",
+      checkoutUrl: "https://sandbox.example.test/checkout",
+      expiresAt: new Date(Date.now() + 3600000),
+      createdAt: new Date(),
+    });
+    await dbManager.commerce.upsertPayment({
+      id: "pay_already_refunded",
+      orderId: "ord_already_refunded",
+      gateway: "CASHFREE",
+      gatewayOrderId: "ord_already_refunded",
+      gatewayPaymentId: "cf_already_refunded",
+      paymentMethod: "UPI",
+      amountInPaise: 449900,
+      status: "REFUNDED",
+      paidAt: new Date(),
+    });
+
+    // C. Uninitiated refund (no gatewayRefundId) & refund on PENDING_PAYMENT enrollment -> 0 refund_deliveries written
+    await dbManager.commerce.upsertRefund({
+      id: "ref_no_gateway",
+      paymentId: "pay_paid_202",
+      enrollmentId: "enr_01",
+      amountInPaise: 499900,
+      reason: "DEMO_DAY_GUARANTEE",
+      initiatedBy: "CLIENT",
+      status: "INITIATED", // Missing gatewayRefundId!
+      estimatedCreditDays: "5–7 business days",
+      initiatedAt: new Date(),
+    });
+    await dbManager.commerce.upsertRefund({
+      id: "ref_unpaid_enr",
+      paymentId: "pay_missing",
+      enrollmentId: "enr_unpaid_guard",
+      amountInPaise: 449900,
+      reason: "DEMO_DAY_GUARANTEE",
+      initiatedBy: "CLIENT",
+      gatewayRefundId: "CF_FAKE_REF",
+      status: "INITIATED",
+      estimatedCreditDays: "5–7 business days",
+      initiatedAt: new Date(),
+    });
+
+    const engine = new CronEngine();
+    engine.registerJob(enrollmentSuccessJob);
+    engine.registerJob(refundStatusJob);
+
+    const enrLog = await engine.runJobNow("job.enrollment_success_dispatch");
+    const refLog = await engine.runJobNow("job.refund_status_notification");
+
+    expect(enrLog.recordsProcessed).toBe(0);
+    expect(refLog.recordsProcessed).toBe(0);
+    expect(await dbRouter.find("enrollment_deliveries", undefined, undefined, "commerce")).toHaveLength(0);
+    expect(await dbRouter.find("refund_deliveries", undefined, undefined, "commerce")).toHaveLength(0);
   });
 });

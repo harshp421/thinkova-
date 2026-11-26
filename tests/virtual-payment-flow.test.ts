@@ -1,3 +1,5 @@
+import { POST as payInstallment, GET as quoteInstallment } from "../src/app/api/cashfree/installment/route";
+import { createTestSession } from "./fixtures";
 import { NextRequest } from "next/server";
 import { GET as getCourses } from "../src/app/api/courses/route";
 import { authenticateParent } from "./fixtures";
@@ -80,6 +82,7 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
       method: "POST",
       body: JSON.stringify({
         courseId, paymentPlan, amountInRupees: amount,
+        termsAccepted: true,
         studentName: "Test Student", parentName: "Test Parent",
         parentEmail: "quote-parent@example.test", parentPhone: "9876543210", schoolUid: "TEST",
       }),
@@ -95,8 +98,41 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
     expect((await dbManager.commerce.getEnrollmentById(enrollmentId))?.courseId).toBe(courseId);
   });
 
+  it("uses the stored balance and marks installment two paid on the same enrollment", async () => {
+    const token = await createTestSession({
+      userId: "usr_parent_01", email: "installment@example.test", username: "Parent",
+      fullName: "Test Parent", role: "PARENT", phone: "9000000000",
+    });
+    const request = (method = "GET") => new Request("https://example.test/api/cashfree/installment?enrollmentId=enr_01", {
+      method, headers: { authorization: "Bearer " + token },
+    });
+    const quote = await quoteInstallment(request());
+    expect(await quote.json()).toMatchObject({ amount: 2499 });
+    const checkout = await payInstallment(request("POST"));
+    expect(checkout.status).toBe(200);
+    const orders = await dbManager.router.find<{ id: string; amountInPaise: number }>("orders", { enrollmentId: "enr_01", orderType: "INSTALLMENT_2" }, undefined, "commerce");
+    expect(orders).toHaveLength(1);
+    const order = orders[0];
+    if (!order) throw new Error("Expected a second installment order");
+    expect(order.amountInPaise).toBe(249900);
+
+    const body = JSON.stringify({ type: "PAYMENT_SUCCESS_WEBHOOK", data: {
+      order: { order_id: order.id },
+      payment: { cf_payment_id: "test-second-installment", payment_status: "SUCCESS", payment_amount: 2499, payment_currency: "INR" },
+    } });
+    const timestamp = String(Date.now());
+    const signature = crypto.createHmac("sha256", testSecret).update(timestamp + body).digest("base64");
+    const confirmed = await webhookHandler(new Request("https://example.test/api/cashfree/webhook", {
+      method: "POST", headers: { "x-webhook-timestamp": timestamp, "x-webhook-signature": signature }, body,
+    }));
+    expect(confirmed.status).toBe(200);
+    expect(await dbManager.commerce.getEnrollmentById("enr_01")).toMatchObject({ status: "ENROLLED", installment2Paid: true });
+    expect((await quoteInstallment(request())).status).toBe(409);
+  });
+
   it("1. Creates a real Cashfree gateway order and stores user, student, and order in dynamic database", async () => {
     const orderPayload = {
+      termsAccepted: true,
       studentName: "Aarav Sharma",
       parentName: "Priya Sharma",
       parentEmail: "priya.sharma@example.com",
@@ -145,6 +181,7 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        termsAccepted: true,
         studentName: "Rohan Verma",
         parentName: "Suresh Verma",
         parentEmail: "suresh.verma@example.com",
@@ -265,6 +302,7 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        termsAccepted: true,
         studentName: "Ananya Iyer",
         parentName: "Karthik Iyer",
         parentEmail: "karthik.iyer@example.com",
@@ -402,6 +440,7 @@ describe("Cashfree Live Payment & Automated Email Pipeline", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        termsAccepted: true,
         studentName: "Unconfigured Test",
         parentName: "Test Parent",
         parentEmail: "test@example.com",

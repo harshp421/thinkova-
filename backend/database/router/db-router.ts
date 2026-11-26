@@ -264,6 +264,14 @@ export class DatabaseRouter {
     });
   }
 
+  public async count(
+    collection: string,
+    filter?: QueryFilter,
+    domain: DomainPartition = "default"
+  ): Promise<number> {
+    return this.executeWithFailover(domain, (driver) => driver.count(collection, filter));
+  }
+
   public async upsert<T extends { id: string }>(
     collection: string,
     record: T,
