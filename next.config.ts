@@ -17,7 +17,7 @@ const nextConfig: NextConfig = {
     qualities: [75, 85, 90, 95, 100],
   },
   async headers() {
-    return ["/api/auth/:path*", "/api/students", "/api/profile/:path*", "/api/tutor/:path*", "/api/learning/:path*", "/api/cashfree/order", "/api/cashfree/refund"].map(source => ({
+    return ["/api/auth/:path*", "/api/students", "/api/profile/:path*", "/api/tutor/:path*", "/api/learning/:path*", "/api/cashfree/order", "/api/cashfree/refund", "/api/cashfree/installment"].map(source => ({
       source, headers: [{ key: "Cache-Control", value: "private, no-store" }],
     }));
   },

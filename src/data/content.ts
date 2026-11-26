@@ -69,7 +69,7 @@ export const pricing = {
     "Progress updates after levels 2, 4 and 6",
     "Demo day and a digital portfolio",
   ],
-  promiseTitle: "If your child comes to at least 6 of the 8 classes and can’t show a working AI helper at demo day, we refund ₹2,499.",
+  promiseTitle: "If your child comes to at least 6 of the 8 classes and can’t show a working AI helper at demo day, you can request our Demo Day refund.",
   promisePoints: [
     "At demo day, the helper must complete the two tasks your child set for it.",
     "You watch it happen, so there is nothing to argue about.",

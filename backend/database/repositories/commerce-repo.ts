@@ -1,3 +1,5 @@
+import { enrollmentPricing } from "../../../src/lib/enrollment-pricing";
+import { allCourses } from "../../../src/data/tracks";
 import type {
   UserEntity,
   StudentEntity,
@@ -47,6 +49,7 @@ export interface AssessmentWithRelations {
 
 export interface ICommerceRepository {
   getOrdersAwaitingPayment(thresholdMinutes: number): Promise<OrderWithRelations[]>;
+  getInstallmentBalance(enrollment: EnrollmentEntity, userId: string): Promise<number | null>;
   getInstallmentsDue(daysAhead: number): Promise<InstallmentDueWithRelations[]>;
   getNewlyPaidOrders(): Promise<OrderWithRelations[]>;
   getFailedOrders(): Promise<Array<{ order: OrderEntity; user: UserEntity; student: StudentEntity }>>;
@@ -152,6 +155,25 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
     return results;
   }
 
+  async getInstallmentBalance(enrollment: EnrollmentEntity, userId: string): Promise<number | null> {
+    if (enrollment.paymentPlan !== "INSTALLMENTS" || enrollment.status !== "ENROLLED" || enrollment.installment2Paid) return null;
+    const firstOrders = await this.router.find<OrderEntity>("orders", {
+      enrollmentId: enrollment.id, userId, orderType: "INSTALLMENT_1", status: "PAID",
+    }, undefined, "commerce");
+    for (const order of firstOrders) {
+      const payment = await this.getPaymentByOrderId(order.id);
+      if (payment?.status !== "SUCCESS") continue;
+      if (enrollment.installmentBalanceInPaise && enrollment.installmentBalanceInPaise > 0) return enrollment.installmentBalanceInPaise;
+      if (!enrollment.courseId) return null;
+      const course = await this.router.get<CourseEntity>("courses", enrollment.courseId, "schools");
+      const price = course?.price ?? allCourses.find(item => item.id === enrollment.courseId)?.price;
+      if (!price) return null;
+      const balance = Math.round(enrollmentPricing(price).total * 100) - payment.amountInPaise;
+      return balance > 0 ? balance : null;
+    }
+    return null;
+  }
+
   async getInstallmentsDue(daysAhead: number): Promise<InstallmentDueWithRelations[]> {
     const now = Date.now();
     const windowMs = daysAhead * 24 * 3600 * 1000;
@@ -159,7 +181,7 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
     const results: InstallmentDueWithRelations[] = [];
 
     for (const enr of enrollments) {
-      if (!enr.installment2Paid && !enr.installmentReminderSentAt) {
+      if (enr.status === "ENROLLED" && !enr.installment2Paid && !enr.installmentReminderSentAt) {
         // Query batch from schools domain via router
         const batch = await this.router.get<{ id: string; level5Date: Date | string }>("batches", enr.cohortBatchId, "schools");
         if (batch) {
@@ -183,17 +205,45 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
 
   async getNewlyPaidOrders(): Promise<OrderWithRelations[]> {
     const orders = await this.router.find<OrderEntity>("orders", { status: "PAID" }, undefined, "commerce");
+    const unsent = orders.filter((order) => order.orderType !== "INSTALLMENT_2" && !order.enrolmentNotificationSentAt);
+    if (unsent.length === 0) return [];
+
+    const orderIds = unsent.map((o) => o.id);
+    const payments = await this.router.find<PaymentEntity>("payments", { orderId: { $in: orderIds } }, undefined, "commerce");
+    const paidOrderIds = new Set(payments.filter((p) => p.status === "SUCCESS").map((p) => p.orderId));
+
+    const enrollmentIds = Array.from(new Set(unsent.map((o) => o.enrollmentId).filter(Boolean)));
+    const enrollments =
+      enrollmentIds.length > 0
+        ? await this.router.find<EnrollmentEntity>("enrollments", { id: { $in: enrollmentIds } }, undefined, "commerce")
+        : [];
+    const enrollmentMap = new Map(enrollments.map((e) => [e.id, e]));
+
+    const studentIds = Array.from(new Set(enrollments.map((e) => e.studentId).filter(Boolean)));
+    const students =
+      studentIds.length > 0
+        ? await this.router.find<StudentEntity>("students", { id: { $in: studentIds } }, undefined, "commerce")
+        : [];
+    const studentMap = new Map(students.map((s) => [s.id, s]));
+
+    const userIds = Array.from(new Set(students.map((s) => s.parentUserId).filter(Boolean)));
+    const users =
+      userIds.length > 0
+        ? await this.router.find<UserEntity>("users", { id: { $in: userIds } }, undefined, "commerce")
+        : [];
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
     const results: OrderWithRelations[] = [];
+    for (const order of unsent) {
+      // Strictly require a verified SUCCESS payment and an active ENROLLED registration
+      if (!paidOrderIds.has(order.id)) continue;
+      const enrollment = enrollmentMap.get(order.enrollmentId);
+      if (!enrollment || enrollment.status !== "ENROLLED") continue;
+      const student = studentMap.get(enrollment.studentId);
+      const user = student ? userMap.get(student.parentUserId) : undefined;
 
-    for (const order of orders) {
-      if (!order.enrolmentNotificationSentAt) {
-        const enrollment = await this.router.get<EnrollmentEntity>("enrollments", order.enrollmentId, "commerce");
-        const student = enrollment ? await this.router.get<StudentEntity>("students", enrollment.studentId, "commerce") : null;
-        const user = student ? await this.router.get<UserEntity>("users", student.parentUserId, "commerce") : null;
-
-        if (enrollment && student && user) {
-          results.push({ order, enrollment, student, user });
-        }
+      if (student && user) {
+        results.push({ order, enrollment, student, user });
       }
     }
 
@@ -220,23 +270,38 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
   }
 
   async getPendingRefunds(): Promise<RefundWithRelations[]> {
-    const refunds = await this.router.find<RefundEntity>("refunds", { status: "INITIATED" }, undefined, "commerce");
-    const unsent = refunds.filter((refund) => !refund.refundAlertSentAt);
+    const refunds = await this.router.find<RefundEntity>("refunds", { status: { $in: ["INITIATED", "PROCESSING", "COMPLETED"] } }, undefined, "commerce");
+    // Strictly require gatewayRefundId so pre-gateway/uninitiated refund reservations never trigger notifications
+    const unsent = refunds.filter(
+      (refund) => !refund.refundAlertSentAt && Boolean(refund.gatewayRefundId && refund.gatewayRefundId.trim())
+    );
     if (unsent.length === 0) return [];
 
-    // Batched $in resolution eliminates N+1 sequential DB round-trips (constant 4 queries instead of 1 + 3N)
+    // Batched $in resolution eliminates N+1 sequential DB round-trips (constant queries regardless of N)
     const enrollmentIds = Array.from(new Set(unsent.map((r) => r.enrollmentId).filter(Boolean)));
-    const enrollments =
+    const paymentIds = Array.from(new Set(unsent.map((r) => r.paymentId).filter(Boolean)));
+    const [enrollments, payments] = await Promise.all([
       enrollmentIds.length > 0
-        ? await this.router.find<EnrollmentEntity>("enrollments", { id: { $in: enrollmentIds } }, undefined, "commerce")
-        : [];
+        ? this.router.find<EnrollmentEntity>("enrollments", { id: { $in: enrollmentIds } }, undefined, "commerce")
+        : Promise.resolve([]),
+      paymentIds.length > 0
+        ? this.router.find<PaymentEntity>("payments", { id: { $in: paymentIds } }, undefined, "commerce")
+        : Promise.resolve([]),
+    ]);
     const enrollmentMap = new Map(enrollments.map((e) => [e.id, e]));
+    const paymentMap = new Map(payments.map((p) => [p.id, p]));
 
+    const orderIds = Array.from(new Set(payments.map((p) => p.orderId).filter(Boolean)));
     const studentIds = Array.from(new Set(enrollments.map((e) => e.studentId).filter(Boolean)));
-    const students =
+    const [orders, students] = await Promise.all([
+      orderIds.length > 0
+        ? this.router.find<OrderEntity>("orders", { id: { $in: orderIds } }, undefined, "commerce")
+        : Promise.resolve([]),
       studentIds.length > 0
-        ? await this.router.find<StudentEntity>("students", { id: { $in: studentIds } }, undefined, "commerce")
-        : [];
+        ? this.router.find<StudentEntity>("students", { id: { $in: studentIds } }, undefined, "commerce")
+        : Promise.resolve([]),
+    ]);
+    const orderMap = new Map(orders.map((o) => [o.id, o]));
     const studentMap = new Map(students.map((s) => [s.id, s]));
 
     const userIds = Array.from(new Set(students.map((s) => s.parentUserId).filter(Boolean)));
@@ -249,7 +314,15 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
     const results: RefundWithRelations[] = [];
     for (const refund of unsent) {
       const enrollment = enrollmentMap.get(refund.enrollmentId);
-      const student = enrollment ? studentMap.get(enrollment.studentId) : undefined;
+      const payment = paymentMap.get(refund.paymentId);
+      const order = payment ? orderMap.get(payment.orderId) : undefined;
+
+      // Never dispatch refund alerts if enrollment was never registered or payment was never completed
+      if (!enrollment || (enrollment.status !== "ENROLLED" && enrollment.status !== "REFUNDED")) continue;
+      if (!payment || (payment.status !== "SUCCESS" && payment.status !== "REFUNDED")) continue;
+      if (!order || order.status !== "PAID") continue;
+
+      const student = studentMap.get(enrollment.studentId);
       const user = student ? userMap.get(student.parentUserId) : undefined;
       if (student && user) {
         results.push({ refund, user, student });
@@ -359,7 +432,9 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
     gatewayRefundId?: string;
   }): Promise<RefundEntity | null> {
     const existing = await this.getRefundById(params.refundId);
-    if (!existing) return null;
+    if (!existing || existing.status === "COMPLETED") return existing;
+    if (existing.status === "FAILED" && params.status !== "COMPLETED") return existing;
+    if (existing.status === "PROCESSING" && existing.gatewayRefundId && params.status === "INITIATED") return existing;
 
     const patch: Partial<RefundEntity> = {
       status: params.status,
@@ -369,10 +444,15 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
     await this.router.update<RefundEntity>("refunds", existing.id, patch, "commerce");
 
     if (params.status === "COMPLETED") {
-      await this.updateEnrollmentStatus(existing.enrollmentId, "REFUNDED");
-      if (existing.paymentId) {
-        await this.router.update<PaymentEntity>("payments", existing.paymentId, { status: "REFUNDED" }, "commerce");
+      const payment = await this.router.get<PaymentEntity>("payments", existing.paymentId, "commerce");
+      if (payment && existing.amountInPaise >= payment.amountInPaise) {
+        await this.router.update<PaymentEntity>("payments", payment.id, { status: "REFUNDED" }, "commerce");
       }
+      const orders = await this.router.find<OrderEntity>("orders", { enrollmentId: existing.enrollmentId, status: "PAID" }, undefined, "commerce");
+      const paid = orders.reduce((total, order) => total + order.amountInPaise, 0);
+      const refunds = await this.getRefundsByEnrollmentId(existing.enrollmentId);
+      const refunded = refunds.filter(refund => refund.status === "COMPLETED").reduce((total, refund) => total + refund.amountInPaise, 0);
+      if (paid > 0 && refunded >= paid) await this.updateEnrollmentStatus(existing.enrollmentId, "REFUNDED");
     }
 
     return await this.getRefundById(existing.id);
@@ -599,6 +679,13 @@ export class PreSchemaCommerceRepository implements ICommerceRepository {
     const enrollment = await this.getEnrollmentById(order.enrollmentId);
     if (!enrollment) {
       throw new Error(`Enrollment ${order.enrollmentId} not found for order ${params.orderId}.`);
+    }
+    if (order.orderType === "INSTALLMENT_2") {
+      await this.router.update<EnrollmentEntity>("enrollments", enrollment.id, { installment2Paid: true }, "commerce");
+      await this.updateOrderStatus(order.id, "PAID");
+      const details = await this.getOrderWithJoinedDetails(order.id);
+      if (!details) throw new Error("Installment details unavailable");
+      return details;
     }
     await this.updateEnrollmentStatus(enrollment.id, "ENROLLED");
 

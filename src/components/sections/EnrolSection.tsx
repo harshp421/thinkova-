@@ -25,7 +25,7 @@ export function EnrolSection() {
   const [mobile, setMobile] = useState("");
   const [email, setEmail] = useState("");
   const [payPlan, setPayPlan] = useState<"full" | "installments">("full");
-  const [consent, setConsent] = useState(true);
+  const [consent, setConsent] = useState(false);
   const [linkedProfileBanner, setLinkedProfileBanner] = useState<string | null>(null);
 
   const [enrolSubmitting, setEnrolSubmitting] = useState(false);
@@ -157,6 +157,7 @@ export function EnrolSection() {
           grade: parseInt(grade.replace(/\D/g, "") || "6", 10),
           courseId: activeCourse.id,
           paymentPlan: payPlan === "full" ? "FULL" : "INSTALLMENTS",
+          termsAccepted: consent,
           amountInRupees: currentAmount,
         }),
       });
@@ -526,7 +527,7 @@ export function EnrolSection() {
                         <div className="mt-2 text-[22px] font-bold text-[#0B0C0F] leading-none">
                           {pricing ? formatEnrollmentAmount(pricing.first) : "—"} now
                         </div>
-                        <p className="mt-1 text-xs text-[#5A5F6B]">Second part by week 4</p>
+                        <p className="mt-1 text-xs text-[#5A5F6B]">Second part by Level 5</p>
                       </div>
                     </div>
                   </div>

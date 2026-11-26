@@ -114,6 +114,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unknown refund" }, { status: 404 });
     }
 
+    if (refundData?.refund_amount !== undefined &&
+      Math.round(Number(refundData.refund_amount) * 100) !== existingRefund.amountInPaise) {
+      return NextResponse.json({ error: "Refund amount does not match" }, { status: 422 });
+    }
+    if (refundData?.refund_currency && refundData.refund_currency !== "INR") {
+      return NextResponse.json({ error: "Refund currency does not match" }, { status: 422 });
+    }
+    if (!["SUCCESS", "PENDING", "ONHOLD", "PROCESSING", "CANCELLED", "FAILED"].includes(rawRefundStatus)) {
+      return NextResponse.json({ error: "Unrecognized refund status" }, { status: 422 });
+    }
+
     const mappedStatus =
       rawRefundStatus === "SUCCESS"
         ? "COMPLETED"

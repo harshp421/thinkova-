@@ -199,6 +199,8 @@ export class PreSchemaValidator {
       currentLevel: Number(data.currentLevel || 1),
       enrolledAt: this.toDate(data.enrolledAt || new Date(), "Enrollment", "enrolledAt"),
       installment2Paid: Boolean(data.installment2Paid),
+      installmentBalanceInPaise: data.installmentBalanceInPaise,
+      termsAcceptedAt: data.termsAcceptedAt,
       installmentReminderSentAt: data.installmentReminderSentAt ? this.toDate(data.installmentReminderSentAt, "Enrollment", "installmentReminderSentAt") : undefined,
     };
   }

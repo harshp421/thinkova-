@@ -41,6 +41,7 @@ export interface InstallmentReminderData {
 }
 
 export interface RefundNotificationData {
+  completed?: boolean;
   parentName: string;
   studentName: string;
   refundAmount: string;
@@ -242,14 +243,14 @@ export const emailTemplates = {
    * 5. Refund Notification
    */
   refundNotification: (d: RefundNotificationData) => ({
-    subject: `Refund Notice: ${d.refundAmount} initiated for ${d.studentName}`,
-    text: `Hi ${d.parentName},\n\nA refund of ${d.refundAmount} has been initiated for ${d.studentName} (Ref: ${d.refundReference}).\nReason: ${d.reason}\nEstimated credit: ${d.estimatedCreditDays}`,
+    subject: `Refund Notice: ${d.refundAmount} ${d.completed ? "processed" : "initiated"} for ${d.studentName}`,
+    text: `Hi ${d.parentName},\n\nA refund of ${d.refundAmount} has been ${d.completed ? "processed" : "initiated"} for ${d.studentName} (Ref: ${d.refundReference}).\nReason: ${d.reason}\nEstimated credit: ${d.estimatedCreditDays}`,
     html: `
       <div style="${baseStyles}">
         <div style="${cardStyles}">
           <h2 style="color: #0E0F12; margin-top: 0;">Refund Initiated</h2>
           <p>Hi <strong>${d.parentName}</strong>,</p>
-          <p>This email confirms that a refund of <strong>${d.refundAmount}</strong> has been initiated for <strong>${d.studentName}</strong>.</p>
+          <p>This email confirms that a refund of <strong>${d.refundAmount}</strong> has been ${d.completed ? "processed" : "initiated"} for <strong>${d.studentName}</strong>.</p>
           
           <div style="background: #F4F3EE; border-radius: 10px; padding: 18px; margin: 20px 0;">
             <p style="margin: 4px 0;"><strong>Refund Amount:</strong> ${d.refundAmount}</p>

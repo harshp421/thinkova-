@@ -387,7 +387,7 @@ export default function CourseDetailsPage() {
 
               <div className="mt-6 pt-4 border-t border-[#F0ECE1] text-[11px] leading-[18px] text-[#8F94A0]">
                 <strong className="text-[#0B0C0F]">Our promise:</strong> attend at least 3 in 4 classes.
-                If it doesn&apos;t pass, half the fee comes back.
+                If it doesn&apos;t pass, see the Demo Day refund terms.
               </div>
             </div>
           </div>

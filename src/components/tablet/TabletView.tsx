@@ -199,6 +199,7 @@ export function TabletView() {
   const firstFee = pricing ? formatEnrollmentAmount(pricing.first) : "See checkout";
   const secondFee = pricing ? formatEnrollmentAmount(pricing.second) : "See checkout";
   const totalFee = pricing ? formatEnrollmentAmount(pricing.total) : "See checkout";
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Field validation checks for tablet form
@@ -210,7 +211,7 @@ export function TabletView() {
     isTabletSchoolCodeValid &&
     parentName.trim().length >= 2 &&
     isTabletPhoneValid &&
-    isTabletEmailValid;
+    isTabletEmailValid && termsAccepted;
 
   // School pack form
   const [schoolSubmitted, setSchoolSubmitted] = useState(false);
@@ -257,6 +258,7 @@ export function TabletView() {
           grade: parseInt(childGrade.replace(/\D/g, "") || "6", 10),
           paymentPlan: selectedPlan === "full" ? "FULL" : "INSTALLMENTS",
           courseId: "robotics-starter",
+          termsAccepted,
           amountInRupees,
         }),
       });
@@ -2014,6 +2016,10 @@ export function TabletView() {
                     )}
                   </div>
 
+                  <label className="flex items-start gap-2 text-sm">
+                    <input type="checkbox" checked={termsAccepted} onChange={event => setTermsAccepted(event.target.checked)} />
+                    <span>I agree to the <a className="underline" href={legalLinks.terms}>enrollment terms</a> and <a className="underline" href={legalLinks.childSafety}>child safety policy</a>.</span>
+                  </label>
                   {enrolError && <p role="alert" className="text-sm text-red-700">{enrolError}</p>}
                   {unavailable && <button type="button" onClick={refresh}>Retry loading price</button>}
                   <button

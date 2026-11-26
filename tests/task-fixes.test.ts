@@ -281,6 +281,7 @@ describe("8 Core Tasks - Verification & Integration Tests", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           orderId: "ord_reuse_test_101",
+          termsAccepted: true,
           studentName: "Anvith Verma",
           parentName: "Kavita Verma",
           parentEmail: "kavita.verma@example.com",

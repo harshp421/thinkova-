@@ -182,6 +182,7 @@ export const config = {
     "/api/learning/:path*",
     "/api/auth/:path*",
     "/api/cashfree/order",
+    "/api/cashfree/installment",
     "/api/cashfree/order/:path*",
     "/api/cashfree/refund",
     "/api/cashfree/refund/:path*",

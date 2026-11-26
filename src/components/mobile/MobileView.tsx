@@ -243,6 +243,7 @@ export function MobileView() {
           grade: parseInt(enrolGrade.replace(/\D/g, "") || "6", 10),
           paymentPlan: selectedPricingPlan === "full" ? "FULL" : "INSTALLMENTS",
           courseId: "robotics-starter",
+          termsAccepted: enrolConsent,
           amountInRupees,
         }),
       });

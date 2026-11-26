@@ -62,6 +62,7 @@ export interface IDatabaseDriver {
    */
   get<T>(collection: string, id: string): Promise<T | null>;
   find<T>(collection: string, filter?: QueryFilter, options?: QueryOptions): Promise<T[]>;
+  count(collection: string, filter?: QueryFilter): Promise<number>;
   upsert<T extends { id: string }>(collection: string, record: T): Promise<void>;
   update<T>(collection: string, id: string, partial: Partial<T>): Promise<void>;
   delete(collection: string, id: string): Promise<boolean>;
