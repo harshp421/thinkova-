@@ -11,6 +11,29 @@ declare global {
   var __THINKOVA_GLOBAL_MEMORY_STORE__: Map<string, Map<string, unknown>> | undefined;
 }
 
+function matchesFilter(record: unknown, entries: [string, unknown][]): boolean {
+  const fields = record as Record<string, unknown>;
+  for (const [key, expected] of entries) {
+    if (expected === undefined) continue;
+    const actual = fields[key];
+
+    if (expected !== null && typeof expected === "object" && !(expected instanceof Date)) {
+      const operators = expected as Record<string, unknown>;
+      if (operators.$gt !== undefined && !((actual as number) > (operators.$gt as number))) return false;
+      if (operators.$gte !== undefined && !((actual as number) >= (operators.$gte as number))) return false;
+      if (operators.$lt !== undefined && !((actual as number) < (operators.$lt as number))) return false;
+      if (operators.$lte !== undefined && !((actual as number) <= (operators.$lte as number))) return false;
+      if (operators.$ne !== undefined && actual === operators.$ne) return false;
+      if (Array.isArray(operators.$in) && !operators.$in.includes(actual)) return false;
+    } else if (Array.isArray(actual)) {
+      if (!actual.includes(expected)) return false;
+    } else if (actual !== expected) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * High-Performance In-Memory Driver
  * Zero-dependency, thread-safe, synchronous/asynchronous in-memory engine.
@@ -86,37 +109,11 @@ export class MemoryDatabaseDriver implements IDatabaseDriver {
   ): Promise<T[]> {
     const coll = this.getCollection(collection);
     const results: T[] = [];
+    const entries = Object.entries(filter ?? {});
 
     for (const record of coll.values()) {
-      const rec = record as Record<string, unknown>;
-      let matches = true;
-
-      if (filter && Object.keys(filter).length > 0) {
-        for (const [key, expected] of Object.entries(filter)) {
-          if (expected !== undefined) {
-            const actual = rec[key];
-
-            // Complex operator matching
-            if (expected !== null && typeof expected === "object" && !(expected instanceof Date)) {
-              const expObj = expected as Record<string, unknown>;
-              if (expObj.$gt !== undefined && !((actual as number) > (expObj.$gt as number))) matches = false;
-              if (expObj.$gte !== undefined && !((actual as number) >= (expObj.$gte as number))) matches = false;
-              if (expObj.$lt !== undefined && !((actual as number) < (expObj.$lt as number))) matches = false;
-              if (expObj.$lte !== undefined && !((actual as number) <= (expObj.$lte as number))) matches = false;
-              if (expObj.$ne !== undefined && actual === expObj.$ne) matches = false;
-              if (Array.isArray(expObj.$in) && !expObj.$in.includes(actual)) matches = false;
-            } else if (Array.isArray(actual)) {
-              if (!actual.includes(expected)) matches = false;
-            } else if (actual !== expected) {
-              matches = false;
-            }
-          }
-          if (!matches) break;
-        }
-      }
-
-      if (matches) {
-        results.push(structuredClone(rec) as T);
+      if (matchesFilter(record, entries)) {
+        results.push(structuredClone(record) as T);
       }
     }
 
@@ -138,6 +135,19 @@ export class MemoryDatabaseDriver implements IDatabaseDriver {
     const offset = options?.offset || 0;
     const limit = options?.limit !== undefined ? options.limit : results.length;
     return results.slice(offset, offset + limit);
+  }
+
+  public async count(collection: string, filter?: QueryFilter): Promise<number> {
+    const records = this.store.get(collection);
+    if (!records) return 0;
+    const entries = Object.entries(filter ?? {});
+    if (entries.length === 0) return records.size;
+
+    let total = 0;
+    for (const record of records.values()) {
+      if (matchesFilter(record, entries)) total++;
+    }
+    return total;
   }
 
   public async upsert<T extends { id: string }>(collection: string, record: T): Promise<void> {

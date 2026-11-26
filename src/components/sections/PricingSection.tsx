@@ -93,7 +93,7 @@ export function PricingSection() {
                   {pricing ? formatEnrollmentAmount(pricing.total) : "—"}
                 </div>
                 <p className="mt-2 text-xs text-white/60 leading-normal">
-                  {pricing ? `${formatEnrollmentAmount(pricing.first)} now, ${formatEnrollmentAmount(pricing.second)} by week 4` : "Price available at enrolment"}
+                  {pricing ? `${formatEnrollmentAmount(pricing.first)} now, ${formatEnrollmentAmount(pricing.second)} by Level 5` : "Price available at enrolment"}
                 </p>
               </div>
             </div>
@@ -156,7 +156,7 @@ export function PricingSection() {
               </span>
               <p className="mt-3 text-[16px] leading-[26px] font-medium text-[#0B0C0F]">
                 Come to at least 3 in 4 classes. If your child can’t show a working project at
-                demo day, we refund half the fee within 7 working days.
+                demo day, you can request our Demo Day refund.
               </p>
             </div>
           </div>

@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { Collection, MongoClient } from "mongodb";
+import { dbManager, DynamicDatabaseManager } from "../backend/database/client";
 import { DatabaseRouter } from "../backend/database/router/db-router";
 import { PreSchemaValidator, PreSchemaValidationError } from "../backend/database/schema/validator";
 import { UniversalSchemaMapper } from "../backend/database/schema/mapper";
 import { MemoryDatabaseDriver } from "../backend/database/drivers/memory-driver";
 import type { IDatabaseDriver, SupportedDialect, DatabaseDriverStatus } from "../backend/database/drivers/interface";
+import { GET as getDatabaseHealth } from "../src/app/api/db/route";
 
 describe("Pre-High Stable DB Routing & Pre-Schema Integration", () => {
   let router: DatabaseRouter;
@@ -113,6 +116,11 @@ describe("Pre-High Stable DB Routing & Pre-Schema Integration", () => {
       });
       expect(inQuery.length).toBe(2);
 
+      expect(await driver.count("orders", {
+        amount: { $gt: 2000 },
+        status: { $in: ["PAID"] },
+      })).toBe(1);
+
       // Update
       await driver.update("orders", "o2", { status: "PAID" });
       const updated = await driver.get<{ id: string; status: string }>("orders", "o2");
@@ -122,7 +130,56 @@ describe("Pre-High Stable DB Routing & Pre-Schema Integration", () => {
       await driver.delete("orders", "o1");
       const deleted = await driver.get("orders", "o1");
       expect(deleted).toBeNull();
+      expect(await driver.count("orders")).toBe(2);
+      expect(await driver.count("missing_collection")).toBe(0);
     });
+  });
+
+  it("returns health counts from both MongoDB partitions without reading documents", async () => {
+    const schools = router.createDriverFromUri("schools_db", "mongodb://localhost/health_schools")!;
+    const commerce = router.createDriverFromUri("commerce_db", "mongodb://localhost/health_commerce")!;
+    router.registerDriver("schools_db", schools);
+    router.registerDriver("commerce_db", commerce);
+    router.setDomainRoute("schools", "schools_db");
+    router.setDomainRoute("commerce", "commerce_db");
+
+    const expected: Record<string, Record<string, number>> = {
+      health_schools: { schools: 11, batches: 12, tutors: 13, courses: 14, tracks: 15 },
+      health_commerce: { users: 21, students: 22, orders: 23, payments: 24 },
+    };
+    const manager = new DynamicDatabaseManager(router);
+    vi.spyOn(dbManager, "getDatabaseStatus").mockImplementation(() => manager.getDatabaseStatus());
+    vi.spyOn(MongoClient.prototype, "connect").mockImplementation(async function (this: MongoClient) {
+      return this;
+    });
+    const find = vi.spyOn(Collection.prototype, "find").mockImplementation(() => {
+      throw new Error("Health checks should never load documents");
+    });
+    const countDocuments = vi.spyOn(Collection.prototype, "countDocuments").mockImplementation(async function (this: Collection) {
+      const count = expected[this.dbName]?.[this.collectionName];
+      if (count === undefined) throw new Error("Collection counted on the wrong partition");
+      return count;
+    });
+
+    try {
+      const response = await getDatabaseHealth();
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        status: "ok",
+        database: {
+          status: "STABILIZED",
+          activeEntities: { ...expected.health_schools, ...expected.health_commerce },
+        },
+      });
+      expect(countDocuments).toHaveBeenCalledTimes(9);
+      expect(find).not.toHaveBeenCalled();
+
+      await expect(router.count("orders", { status: "PAID", ignored: undefined }, "commerce")).resolves.toBe(23);
+      expect(countDocuments).toHaveBeenLastCalledWith({ status: "PAID" }, { session: undefined });
+    } finally {
+      await Promise.all([schools.disconnect(), commerce.disconnect()]);
+      vi.restoreAllMocks();
+    }
   });
 
   // 4. Protocol Auto-Detection & Custom Driver Registration
@@ -159,6 +216,7 @@ describe("Pre-High Stable DB Routing & Pre-Schema Integration", () => {
         }),
         get: async () => null,
         find: async () => [],
+        count: async () => 0,
         upsert: async () => {
           customUpsertCalled = true;
         },
@@ -212,6 +270,9 @@ describe("Pre-High Stable DB Routing & Pre-Schema Integration", () => {
           throw new Error("Connection refused: 5432");
         },
         find: async () => {
+          throw new Error("Connection timeout");
+        },
+        count: async () => {
           throw new Error("Connection timeout");
         },
         upsert: async () => {

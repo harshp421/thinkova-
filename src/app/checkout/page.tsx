@@ -92,6 +92,7 @@ export default function CheckoutPage() {
   const [cardCvv, setCardCvv] = useState("");
   const [selectedBank, setSelectedBank] = useState("HDFC Bank");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
   const fullPrice = pricing?.full;
@@ -109,7 +110,7 @@ export default function CheckoutPage() {
       router.push(`/tell-us-child?${selection}`);
       return;
     }
-    if (!payTodayAmount) return;
+    if (!payTodayAmount || !termsAccepted) return;
     setIsProcessing(true);
     setErrorMessage("");
 
@@ -136,6 +137,7 @@ export default function CheckoutPage() {
           schoolUid: schoolName || "PUNE_CAMPUS",
           grade: studentGrade,
           paymentPlan: paymentPlan === "full" ? "FULL" : "INSTALLMENTS",
+          termsAccepted,
           amountInRupees: payTodayAmount,
           courseId: course.id,
           courseTitle: course.title,
@@ -356,7 +358,7 @@ export default function CheckoutPage() {
                       {pricing ? formatEnrollmentAmount(pricing.first) : "—"} <span className="text-base font-normal text-[#5A5F6B]">today</span>
                     </div>
                     <p className="mt-1 text-xs text-[#5A5F6B]">
-                      Then {secondPartAmount ? formatEnrollmentAmount(secondPartAmount) : "—"} before Week 4
+                      Then {secondPartAmount ? formatEnrollmentAmount(secondPartAmount) : "—"} before Level 5
                     </p>
                   </div>
                 </div>
@@ -634,16 +636,19 @@ export default function CheckoutPage() {
                     OUR PROMISE
                   </div>
                   <p className="mt-1 text-[#5A5F6B] leading-relaxed">
-                    Half the fee back if {studentFirstName} attends at least 3 in 4 classes
-                    and doesn&apos;t have a working project.
+                    If {studentFirstName} attends six of eight classes and cannot demonstrate a working project on Demo Day, contact us to request a refund.
                   </p>
                 </div>
 
+                <label className="mt-4 flex items-start gap-2 text-sm">
+                  <input type="checkbox" checked={termsAccepted} onChange={event => setTermsAccepted(event.target.checked)} />
+                  <span>I agree to the <Link href="/legal/terms" className="underline">enrollment terms</Link> and <Link href="/legal/child-safety" className="underline">child safety policy</Link>.</span>
+                </label>
                 {/* Pay Button */}
                 {unavailable && <button type="button" onClick={refresh}>Retry loading price</button>}
                 <button
                   type="button"
-                  disabled={isProcessing || !pricing}
+                  disabled={isProcessing || !pricing || !termsAccepted}
                   onClick={handlePayAndEnrol}
                   className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#FF6026] to-[#FF7A45] px-6 py-4 text-sm font-semibold text-white shadow-[0px_4px_16px_rgba(255,96,38,0.35)] transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-70 cursor-pointer"
                 >

@@ -188,6 +188,8 @@ export interface EnrollmentEntity {
   currentLevel: number;
   enrolledAt: Date;
   installment2Paid?: boolean;
+  installmentBalanceInPaise?: number;
+  termsAcceptedAt?: Date;
   installmentReminderSentAt?: Date;
 }
 

@@ -53,6 +53,9 @@ describe("Cron Job Scheduler & Notification Verification", () => {
     expect(whatsApps.length).toBe(1);
     expect(whatsApps[0]?.templateName).toBe("thinkova_installment_due_v1");
     expect(whatsApps[0]?.fallbackText).toContain("₹2,499");
+    expect(whatsApps[0]?.fallbackText).toContain("/parent/payments?enrollmentId=enr_01");
+    expect(emails[0]?.html).toContain("/parent/payments?enrollmentId=enr_01");
+    expect((await engine.runJobNow("job.installment_due_reminder")).recordsProcessed).toBe(0);
   });
 
   it("3. Generates Enrolment Success email AND WhatsApp message when paid", async () => {

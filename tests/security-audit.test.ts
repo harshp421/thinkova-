@@ -426,6 +426,7 @@ describe("[SEC-04] Client-Controlled Pricing Tampering in Cashfree Order Creatio
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        termsAccepted: true,
         studentName: "Aditya Sharma",
         parentName: "Sanjay Sharma",
         parentEmail: "sanjay@example.com",
@@ -449,6 +450,7 @@ describe("[SEC-04] Client-Controlled Pricing Tampering in Cashfree Order Creatio
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        termsAccepted: true,
         studentName: "Aditya Sharma",
         parentName: "Sanjay Sharma",
         parentEmail: "sanjay@example.com",
@@ -470,6 +472,7 @@ describe("[SEC-04] Client-Controlled Pricing Tampering in Cashfree Order Creatio
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        termsAccepted: true,
         studentName: "Aditya Sharma",
         parentName: "Sanjay Sharma",
         parentEmail: "sanjay@example.com",

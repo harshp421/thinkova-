@@ -25,6 +25,7 @@ interface CreateCashfreeOrderBody {
   trackId?: string;
   autoConfirm?: boolean;
   returnUrl?: string;
+  termsAccepted?: boolean;
 }
 
 /**
@@ -60,6 +61,8 @@ export async function POST(request: Request) {
         { status: 422 }
       );
     }
+
+    if (body.termsAccepted !== true) return NextResponse.json({ error: "Accept the enrollment and safety terms before paying." }, { status: 422 });
 
     if (!cashfreeClient.isConfigured()) {
       return NextResponse.json(
@@ -120,14 +123,18 @@ export async function POST(request: Request) {
       await dbManager.commerce.upsertStudent(student);
     }
 
-    // 2.5 Ensure School and Batch exist dynamically
+    const schoolSlug =
+      schoolUid
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_|_$/g, "") || "general";
     const school = await dbManager.schools.findByUid(schoolUid);
     if (!school) {
       await dbManager.schools.upsertSchool({
-        id: `sch_${schoolUid.toLowerCase()}`,
+        id: `sch_${schoolSlug}`,
         schoolUid: schoolUid.toUpperCase().trim(),
         officialName: `Partner School (${schoolUid.toUpperCase().trim()})`,
-        slug: `school-${schoolUid.toLowerCase().trim()}`,
+        slug: `school-${schoolSlug.replace(/_/g, "-")}`,
         city: process.env.NEXT_PUBLIC_CONTACT_CITY || "Pune",
         state: "Maharashtra",
         board: "CBSE",
@@ -138,12 +145,12 @@ export async function POST(request: Request) {
       });
     }
 
-    const batchId = `batch_${schoolUid.toLowerCase()}_01`;
+    const batchId = `batch_${schoolSlug}_01`;
     const existingBatch = await dbManager.schools.getBatch(batchId);
     if (!existingBatch) {
       await dbManager.schools.upsertBatch({
         id: batchId,
-        schoolId: `sch_${schoolUid.toLowerCase()}`,
+        schoolId: `sch_${schoolSlug}`,
         tutorId: "tutor_lead_01",
         batchCode: `BATCH-${schoolUid.toUpperCase().trim()}-01`,
         gradeLevels: [grade],
@@ -151,7 +158,7 @@ export async function POST(request: Request) {
         startTime: "10:00",
         endTime: "11:30",
         maxCapacity: 25,
-        confirmedStudentsCount: 1,
+        confirmedStudentsCount: 0,
         startDate: new Date(Date.now() + 7 * 24 * 3600 * 1000),
         level5Date: new Date(Date.now() + 35 * 24 * 3600 * 1000),
         demoDayDate: new Date(Date.now() + 56 * 24 * 3600 * 1000),
@@ -160,7 +167,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // 3. Create Enrollment entity with courseId connection in thinkova_commerce.enrollments
+    // Reserve capacity before creating a payable order.
     const enrollmentId = `enr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const enrollment = {
       id: enrollmentId,
@@ -173,8 +180,34 @@ export async function POST(request: Request) {
       currentLevel: 1,
       enrolledAt: new Date(),
       installment2Paid: false,
+      installmentBalanceInPaise: paymentPlan === "INSTALLMENTS" ? Math.round(enrollmentPricing(catalogCourse.price).second * 100) : undefined,
+      termsAcceptedAt: body.termsAccepted === true ? new Date() : undefined,
     };
-    await dbRouter.commerceTransaction(async () => {
+    const existingReservations = await dbManager.commerce.getEnrollmentsByBatchId(batchId);
+    const available = existingBatch?.maxCapacity ?? 25;
+    if (existingReservations.filter(item => item.status === "ENROLLED" || item.status === "PENDING_PAYMENT").length >= available) {
+      for (const pending of existingReservations.filter(item => item.status === "PENDING_PAYMENT")) {
+        const orders = await dbRouter.find<{ id: string; expiresAt: Date }>("orders", {
+          enrollmentId: pending.id, status: "AWAITING_PAYMENT",
+        }, { limit: 1 }, "commerce");
+        const expired = orders[0];
+        if (!expired || new Date(expired.expiresAt).getTime() > Date.now()) continue;
+        const gateway = await cashfreeClient.getOrder(expired.id).catch(() => null);
+        if (!gateway || !["EXPIRED", "TERMINATED"].includes(gateway.orderStatus)) continue;
+        await dbRouter.commerceTransaction(async () => {
+          const current = await dbManager.commerce.getOrderById(expired.id);
+          if (current?.status !== "AWAITING_PAYMENT") return;
+          await dbManager.commerce.updateOrderStatus(expired.id, "FAILED");
+          await dbManager.commerce.updateEnrollmentStatus(pending.id, "DROPPED");
+        });
+      }
+    }
+
+    const reserved = await dbRouter.commerceTransaction(async () => {
+      await dbRouter.upsert("seat_reservation_locks", { id: batchId, orderId }, "commerce");
+      const reservations = await dbManager.commerce.getEnrollmentsByBatchId(batchId);
+      const reservedSeats = reservations.filter(item => item.status === "ENROLLED" || item.status === "PENDING_PAYMENT");
+      if (reservedSeats.length >= available) return false;
       await dbManager.commerce.upsertEnrollment(enrollment);
       await dbManager.commerce.upsertOrder({
         id: orderId,
@@ -187,9 +220,10 @@ export async function POST(request: Request) {
         expiresAt: new Date(Date.now() + 2 * 3600 * 1000),
         createdAt: new Date(),
       });
+      return true;
     });
+    if (!reserved) return NextResponse.json({ error: "This batch is full." }, { status: 409 });
 
-    // 4. Create Cashfree Gateway Order
     const cfOrder = await cashfreeClient.createOrder({
       orderId,
       orderAmount: amount,
@@ -202,6 +236,15 @@ export async function POST(request: Request) {
       },
       orderNote: `ThinkOva Course Admission - ${schoolUid.toUpperCase()} (${studentName})`,
       returnUrl: body.returnUrl,
+    }).catch(async error => {
+      await dbRouter.commerceTransaction(async () => {
+        const order = await dbManager.commerce.getOrderById(orderId);
+        if (order?.status === "AWAITING_PAYMENT") {
+          await dbManager.commerce.updateOrderStatus(orderId, "FAILED");
+          await dbManager.commerce.updateEnrollmentStatus(enrollmentId, "DROPPED");
+        }
+      });
+      throw error;
     });
 
     const checkoutUrl = cfOrder.checkoutUrl || "";
